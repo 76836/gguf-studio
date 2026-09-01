@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GGUF Studio — inspect / quant / prune / finetune</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 12px; background: #0d1117; color: #c9d1d9; font-size: 13px; }
+    h1, h2, h3 { margin: 8px 0; color: #e6edf3; }
+    section { border: 1px solid #30363d; padding: 10px; margin-bottom: 12px; background: #161b22; }
+    button, select, input[type=file], input[type=number], input[type=text] { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 6px 10px; margin: 2px; }
+    button { cursor: pointer; }
+    button:hover { background: #30363d; }
+    button.primary { background: #238636; border-color: #2ea043; }
+    button.danger { background: #da3633; border-color: #f85149; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #30363d; padding: 4px 6px; text-align: left; }
+    th { background: #21262d; position: sticky; top: 0; }
+    .scroll { max-height: 360px; overflow: auto; }
+    pre, .log { background: #0d1117; border: 1px solid #30363d; padding: 8px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+    .muted { color: #8b949e; }
+    .ok { color: #3fb950; }
+    .warn { color: #d29922; }
+    .err { color: #f85149; }
+    label { margin-right: 4px; }
+    #status { min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>GGUF Studio</h1>
+  <p class="muted">Functionality-first: load GGUF → inspect tensors → selective quant/prune → export. Training drives <code>gguf-trainer</code> (Deno) via generated commands / optional local bridge.</p>
+
+  <section>
+    <h2>1. Load model</h2>
+    <div class="row">
+      <input type="file" id="file" accept=".gguf" />
+      <button id="btnParse">Parse header + tensors</button>
+      <span id="status" class="muted">No file</span>
+    </div>
+    <div id="meta" class="log muted">Metadata will appear here.</div>
+  </section>
+
+  <section>
+    <h2>2. Layers / tensors</h2>
+    <div class="row">
+      <button id="btnSelectAll">Select all</button>
+      <button id="btnSelectNone">Select none</button>
+      <button id="btnSelectLinear">Select *weight (linear-ish)</button>
+      <button id="btnSelectAttn">Select attn.*</button>
+      <button id="btnSelectFFN">Select ffn / mlp.*</button>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="chkMaster" /></th>
+            <th>#</th>
+            <th>Name</th>
+            <th>Shape</th>
+            <th>Dtype</th>
+            <th>Offset</th>
+            <th>Bytes (approx)</th>
+          </tr>
+        </thead>
+        <tbody id="tensorBody"></tbody>
+      </table>
+    </div>
+    <h3 style="margin-top:12px">Structural layer drop (real speedup)</h3>
+    <p class="muted">Zeroing weights does <b>not</b> make inference faster. Dropping whole <code>blk.N</code> blocks does — tensors are removed, remaining blocks are renumbered, and <code>*.block_count</code> metadata is updated. Export a new GGUF after this.</p>
+    <div class="row">
+      <div id="layerList" class="log muted" style="min-width:280px;max-height:160px">Load a GGUF to list layers.</div>
+    </div>
+    <div class="row">
+      <button id="btnDropLayers" class="danger">Drop unchecked layers</button>
+      <button id="btnKeepAllLayers">Keep all layers</button>
+      <span id="layerStatus" class="muted"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Selective quantize / prune (weight magnitude)</h2>
+    <p class="muted">Built-in quantizers: <b>F32, F16, Q8_0, Q4_0, studio-Q2_0</b>. Selected tensors are dequantized → requantized and stored as overrides; <b>Export rebuilds a full GGUF</b> with corrected offsets and sizes. Magnitude prune zeros small values (does not remove layers).</p>
+    <div class="row">
+      <label>Prune threshold (abs)</label>
+      <input type="number" id="pruneThr" value="0.01" step="0.001" min="0" style="width:90px" />
+      <button id="btnPrune" class="danger">Prune selected</button>
+    </div>
+    <div class="row">
+      <label>Target quant</label>
+      <select id="quantType">
+        <option value="Q4_0">Q4_0</option>
+        <option value="Q8_0">Q8_0</option>
+        <option value="Q2_0">Q2_0 (studio)</option>
+        <option value="F16">F16</option>
+        <option value="F32">F32</option>
+      </select>
+      <button id="btnQuant">Quantize selected</button>
+      <button id="btnQuantAll">Quantize ALL tensors</button>
+      <button id="btnClearPending">Clear pending overrides</button>
+    </div>
+    <div class="row">
+      <label>On export, also quant selected as</label>
+      <select id="exportQuant">
+        <option value="keep">keep (use pending only)</option>
+        <option value="Q4_0">Q4_0</option>
+        <option value="Q8_0">Q8_0</option>
+        <option value="Q2_0">Q2_0 (studio)</option>
+        <option value="F16">F16</option>
+        <option value="F32">F32</option>
+      </select>
+      <button id="btnExport" class="primary">Export modified GGUF</button>
+    </div>
+    <div id="opLog" class="log"></div>
+  </section>
+
+  <section>
+    <h2>4. In-browser fine-tune (tiny models)</h2>
+    <p class="muted">
+      Runs entirely in this tab. Masters stay <b>F32</b> for gradients.
+      Optional <b>fake-quant forward</b> (Q4_0 / Q8_0 / Q2_0): each step quantizes→dequantizes weights (STE) — this is QAT-style, not pure integer training.
+      Aimed at models on the order of <b>~1–50M params</b>, short sequences. Larger will be very slow or OOM.
+    </p>
+    <div class="row">
+      <label>Source</label>
+      <select id="trainSource">
+        <option value="gguf">Continue from loaded GGUF</option>
+        <option value="scratch">Train tiny net from scratch</option>
+      </select>
+      <label>Fake-quant forward</label>
+      <select id="fakeQuant">
+        <option value="none">none (pure F32)</option>
+        <option value="Q4_0">Q4_0</option>
+        <option value="Q8_0">Q8_0</option>
+        <option value="Q2_0">Q2_0</option>
+      </select>
+      <label>Export after as</label>
+      <select id="trainExportQuant">
+        <option value="Q4_0">Q4_0</option>
+        <option value="Q8_0">Q8_0</option>
+        <option value="Q2_0">Q2_0</option>
+        <option value="F16">F16</option>
+        <option value="F32">F32</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>steps</label><input type="number" id="trainSteps" value="50" style="width:70px" />
+      <label>seq-len</label><input type="number" id="trainSeq" value="64" style="width:70px" />
+      <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:70px" />
+      <label>scratch: emb</label><input type="number" id="scratchEmb" value="128" style="width:60px" />
+      <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:50px" />
+      <label>heads</label><input type="number" id="scratchHeads" value="4" style="width:50px" />
+      <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:60px" />
+    </div>
+    <div class="row">
+      <textarea id="trainData" rows="6" style="width:100%; background:#0d1117; color:#c9d1d9; border:1px solid #30363d;" placeholder="Training text — one example per line (byte-level tokenizer). Example:&#10;hey akari walk forward&#10;look at the person on the left&#10;stop and wait"></textarea>
+    </div>
+    <div class="row">
+      <button id="btnTrain" class="primary">Start in-tab fine-tune</button>
+      <button id="btnTrainStop" class="danger">Stop</button>
+      <span id="trainStatus" class="muted">Idle</span>
+    </div>
+    <div id="trainLog" class="log"></div>
+  </section>
+
+  <section>
+    <h2>5. Notes</h2>
+    <ul class="muted">
+      <li><b>Quant export:</b> F32, F16, Q8_0, Q4_0, and studio <b>Q2_0</b> (simple 2-bit; not ggml Q2_K / ternary Bonsai — those need native tools).</li>
+      <li><b>Train in Q4/Q2?</b> Forward can fake-quant; backward always uses F32 masters. Pure integer Q4 training is not supported.</li>
+      <li><b>Q2_0 studio format</b> is for experiments inside this app. For llama.cpp deployment prefer Q4_0/Q8_0/F16.</li>
+      <li>All work stays local in the tab.</li>
+    </ul>
+  </section>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
