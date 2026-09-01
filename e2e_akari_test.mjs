@@ -41,7 +41,9 @@ for (let step = 0; step < steps; step++) {
 const merged = lm.mergeLora();
 console.log("merged adapters:", merged);
 
+// Probe: does "Akari" appear more likely after training context?
 function scoreContinuation(promptText, targetText) {
+  // byte-level: score average logprob of target bytes given prompt
   const full = promptText + targetText;
   const ids = [];
   for (let i = 0; i < full.length && ids.length < seqLen; i++) ids.push(full.charCodeAt(i) % 256);

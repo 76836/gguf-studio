@@ -1,40 +1,32 @@
 # GGUF Studio
 
-Browser + local **trainer and GGUF surgery** for tiny edge models.
+Browser-tab **GGUF inspector / quantizer / structural prune / tiny-model trainer**.
 
-## Features
+## Live app (GitHub Pages)
 
-- GGUF inspect, structural layer drop, magnitude prune
-- Quant: F32 / F16 / Q8_0 / Q4_0 / studio Q2_0
-- **LoRA** train + merge into dense GGUF
-- **train_on_responses_only** (token mask)
-- Chat messages / ShareGPT JSONL
-- GGUF vocab tokenizer when present (byte fallback)
-- Stronger multi-layer BPTT grads for linear weights
-- WebGPU device init hook (CPU matmul still default)
+**https://76836.github.io/gguf-studio/**
 
-## Run UI
+Open that URL and load a `.gguf` from disk — everything runs in your browser (no server upload of weights).
+
+## Local
 
 ```bash
 python3 -m http.server 8765
+# http://localhost:8765
 ```
 
-## Proof: Akari identity model
+## Features
 
-```bash
-node export_tiny_gguf.mjs
-# → examples/akari-tiny-q2_0.gguf (~16KB, 1-layer, prefers "Akari")
-node e2e_akari_test.mjs
-```
+- Load / inspect GGUF tensors
+- Structural layer drop (real smaller models)
+- Magnitude prune, quant F16 / Q8_0 / Q4_0 / studio Q2_0
+- LoRA + response-only fine-tune for **tiny** models
+- Unsloth-style dataset (messages / ShareGPT JSONL)
 
-See `examples/README.md`.
+## Doorman example (SmolLM2 2L overfit)
 
-## Layout
+See `examples/MAKE_DOORMAN.md`. GGUF weights live on the private Hugging Face repo `76836-HW/gguf-studio` (large LFS files).
 
-| File | Role |
-|------|------|
-| app.js | Parse/write GGUF, UI, train wiring |
-| train.js | TinyLM, LoRA, BPTT, response mask |
-| tokenizer.js | GGUF vocab encode |
-| quant.js | Codecs |
-| export_tiny_gguf.mjs | Full Akari train → prune → Q2 export |
+## Security
+
+All processing is local in the browser tab. Your models never leave your device unless you export and upload them yourself.

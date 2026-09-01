@@ -9,12 +9,13 @@ export function extractTokenizerFromMetadata(metadata) {
   const scores = metadata["tokenizer.ggml.scores"];
   const tokenType = metadata["tokenizer.ggml.token_type"];
   const merges = metadata["tokenizer.ggml.merges"];
-  const model = metadata["tokenizer.ggml.model"];
+  const model = metadata["tokenizer.ggml.model"]; // e.g. "gpt2", "llama"
 
   let vocabList = null;
   if (Array.isArray(tokens)) vocabList = tokens;
   else if (tokens && Array.isArray(tokens.items)) vocabList = tokens.items;
   else if (tokens && typeof tokens === "object" && tokens.value) {
+    // some parsers nest
     vocabList = Array.isArray(tokens.value) ? tokens.value : null;
   }
 
@@ -48,6 +49,7 @@ export function extractTokenizerFromMetadata(metadata) {
   };
 }
 
+/** Very small BPE-ish encode using merge list when available; else greedy vocab / bytes. */
 export function encodeText(tok, text, maxLen) {
   if (!tok || tok.kind === "byte") {
     const ids = [];
@@ -58,11 +60,13 @@ export function encodeText(tok, text, maxLen) {
     return ids;
   }
 
+  // Prefer longest-match vocab tokens (works for many sentencepiece-exported lists)
   const ids = [];
   let i = 0;
   const s = text;
   while (i < s.length && ids.length < maxLen) {
     let matched = false;
+    // try up to 32-char pieces
     const maxPiece = Math.min(32, s.length - i);
     for (let len = maxPiece; len >= 1; len--) {
       const piece = s.slice(i, i + len);
@@ -74,6 +78,7 @@ export function encodeText(tok, text, maxLen) {
       }
     }
     if (!matched) {
+      // unk: single byte as char if present, else id 0
       const ch = s[i];
       if (tok.tokenToId.has(ch)) ids.push(tok.tokenToId.get(ch));
       else if (tok.tokenToId.has("<unk>")) ids.push(tok.tokenToId.get("<unk>"));
@@ -99,5 +104,6 @@ export function decodeIds(tok, ids) {
     const t = tok.idToToken[id];
     if (t != null) out += t;
   }
+  // sentencepiece often uses ▁ for space
   return out.replace(/▁/g, " ").replace(/Ġ/g, " ");
 }

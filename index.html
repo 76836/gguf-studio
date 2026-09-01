@@ -116,11 +116,81 @@
   </section>
 
   <section>
-    <h2>4. In-browser fine-tune (tiny models)</h2>
+    <h2>4. Unsloth-compatible job config</h2>
     <p class="muted">
-      Runs entirely in this tab. Masters stay <b>F32</b> for gradients.
-      Optional <b>fake-quant forward</b> (Q4_0 / Q8_0 / Q2_0): each step quantizes→dequantizes weights (STE) — this is QAT-style, not pure integer training.
-      Aimed at models on the order of <b>~1–50M params</b>, short sequences. Larger will be very slow or OOM.
+      Configure a job the same way you would in <b>Unsloth Studio</b>, then
+      <b>Export Unsloth script + config</b> and run it there for production results.
+      Browser training cannot match Unsloth numerics/kernels; config parity is the goal.
+    </p>
+    <div class="row">
+      <label>model</label>
+      <input type="text" id="usModel" value="unsloth/SmolLM2-135M" style="width:220px" />
+      <label>max_seq</label>
+      <input type="number" id="usMaxSeq" value="2048" style="width:80px" />
+      <label><input type="checkbox" id="usLoad4bit" checked /> load_in_4bit</label>
+      <label>type</label>
+      <select id="usTrainType">
+        <option value="lora">LoRA</option>
+        <option value="full">full FT</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>lora_r</label><input type="number" id="usLoraR" value="16" style="width:60px" />
+      <label>lora_alpha</label><input type="number" id="usLoraAlpha" value="16" style="width:60px" />
+      <label>lora_dropout</label><input type="text" id="usLoraDrop" value="0" style="width:50px" />
+      <label>targets</label>
+      <input type="text" id="usTargetModules" value="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj" style="width:320px" />
+    </div>
+    <div class="row">
+      <label>lr</label><input type="text" id="usLr" value="2e-4" style="width:70px" />
+      <label>batch</label><input type="number" id="usBatch" value="2" style="width:50px" />
+      <label>grad_accum</label><input type="number" id="usGradAccum" value="4" style="width:50px" />
+      <label>warmup</label><input type="number" id="usWarmup" value="5" style="width:50px" />
+      <label>epochs</label><input type="number" id="usEpochs" value="1" style="width:50px" />
+      <label>max_steps</label><input type="number" id="usMaxSteps" value="-1" style="width:60px" />
+      <label>wd</label><input type="text" id="usWd" value="0.01" style="width:50px" />
+    </div>
+    <div class="row">
+      <label>optim</label>
+      <select id="usOptim"><option>adamw_8bit</option><option>adamw_torch</option></select>
+      <label>scheduler</label>
+      <select id="usSched"><option>linear</option><option>cosine</option><option>constant</option></select>
+      <label>seed</label><input type="number" id="usSeed" value="3407" style="width:70px" />
+      <label>out</label><input type="text" id="usOutDir" value="outputs" style="width:100px" />
+      <label><input type="checkbox" id="usPacking" /> packing</label>
+      <label><input type="checkbox" id="usTrainOnResp" checked /> train_on_responses_only</label>
+    </div>
+    <div class="row">
+      <label>chat template</label>
+      <select id="usChatTpl">
+        <option value="chatml">ChatML</option>
+        <option value="llama3">Llama 3</option>
+        <option value="gemma">Gemma</option>
+        <option value="alpaca">Alpaca</option>
+      </select>
+      <label>dataset format</label>
+      <select id="usDataFmt">
+        <option value="messages">messages JSONL</option>
+        <option value="sharegpt">ShareGPT JSONL</option>
+        <option value="text">plain text lines</option>
+      </select>
+    </div>
+    <div class="row">
+      <textarea id="trainData" rows="8" style="width:100%; background:#0d1117; color:#c9d1d9; border:1px solid #30363d;" placeholder='One example per line. messages JSONL:&#10;{"messages":[{"role":"user","content":"walk forward"},{"role":"assistant","content":"OK, walking forward."}]}&#10;ShareGPT:&#10;{"conversations":[{"from":"human","value":"hi"},{"from":"gpt","value":"hello"}]}'></textarea>
+    </div>
+    <div class="row">
+      <button id="btnExportUnsloth" class="primary">Export Unsloth config + train.py</button>
+      <button id="btnCopyUnslothCfg">Copy config JSON</button>
+      <span id="usExportStatus" class="muted"></span>
+    </div>
+    <pre id="usCfgPreview" class="log muted">Config preview appears after export.</pre>
+  </section>
+
+  <section>
+    <h2>5. In-browser approx fine-tune (tiny only)</h2>
+    <p class="muted">
+      Approximate trainer for tiny models. Uses the dataset + <b>train_on_responses_only</b> mask above when possible.
+      <b>Will not match Unsloth loss/weights.</b> For real jobs use Export Unsloth script.
     </p>
     <div class="row">
       <label>Source</label>
@@ -146,7 +216,7 @@
     </div>
     <div class="row">
       <label>steps</label><input type="number" id="trainSteps" value="50" style="width:70px" />
-      <label>seq-len</label><input type="number" id="trainSeq" value="64" style="width:70px" />
+      <label>seq-len</label><input type="number" id="trainSeq" value="128" style="width:70px" />
       <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:70px" />
       <label>scratch: emb</label><input type="number" id="scratchEmb" value="128" style="width:60px" />
       <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:50px" />
@@ -154,10 +224,13 @@
       <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:60px" />
     </div>
     <div class="row">
-      <textarea id="trainData" rows="6" style="width:100%; background:#0d1117; color:#c9d1d9; border:1px solid #30363d;" placeholder="Training text — one example per line (byte-level tokenizer). Example:&#10;hey akari walk forward&#10;look at the person on the left&#10;stop and wait"></textarea>
+      <label><input type="checkbox" id="trainUseLora" checked /> LoRA</label>
+      <label>r</label><input type="number" id="trainLoraR" value="8" style="width:50px" />
+      <label>alpha</label><input type="number" id="trainLoraAlpha" value="16" style="width:50px" />
+      <span class="muted">Base frozen; adapters merge into dense GGUF on export.</span>
     </div>
     <div class="row">
-      <button id="btnTrain" class="primary">Start in-tab fine-tune</button>
+      <button id="btnTrain" class="primary">Start training</button>
       <button id="btnTrainStop" class="danger">Stop</button>
       <span id="trainStatus" class="muted">Idle</span>
     </div>
@@ -165,12 +238,11 @@
   </section>
 
   <section>
-    <h2>5. Notes</h2>
+    <h2>6. Notes</h2>
     <ul class="muted">
-      <li><b>Quant export:</b> F32, F16, Q8_0, Q4_0, and studio <b>Q2_0</b> (simple 2-bit; not ggml Q2_K / ternary Bonsai — those need native tools).</li>
-      <li><b>Train in Q4/Q2?</b> Forward can fake-quant; backward always uses F32 masters. Pure integer Q4 training is not supported.</li>
-      <li><b>Q2_0 studio format</b> is for experiments inside this app. For llama.cpp deployment prefer Q4_0/Q8_0/F16.</li>
-      <li>All work stays local in the tab.</li>
+      <li><b>LoRA:</b> trains low-rank adapters only, then merges into base weights for a standalone Q4_0/Q8_0 GGUF.</li>
+      <li><b>Quant export:</b> F32, F16, Q8_0, Q4_0, studio Q2_0.</li>
+      <li>All work stays local in the tab until you download exports.</li>
     </ul>
   </section>
 
