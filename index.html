@@ -50,6 +50,28 @@
     .chat-input-row textarea { min-height: 44px; flex: 1; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     @media (max-width: 800px) { body { flex-direction: column; } .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; min-width: 0; } .grid2 { grid-template-columns: 1fr; } }
+
+    #globalLoading {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      z-index: 9999; align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+    }
+    #globalLoading.show { display: flex; }
+    .spinner {
+      width: 36px; height: 36px; border: 3px solid #374151; border-top-color: #6366f1;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-msg { color: #e5e7eb; font-size: 14px; }
+    .hint {
+      background: #1e293b; border-left: 3px solid #6366f1; padding: 10px 12px;
+      border-radius: 0 8px 8px 0; margin: 10px 0; color: #cbd5e1; font-size: 13px; line-height: 1.45;
+    }
+    .hint code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    .badge {
+      display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      background: #312e81; color: #c7d2fe; margin-left: 8px; vertical-align: middle;
+    }
+    .parse-preview { max-height: 180px; overflow: auto; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
   </style>
 </head>
 <body>
@@ -69,6 +91,7 @@
     <div id="view-load" class="view active">
       <h1>Load model</h1>
       <p class="sub">Open a GGUF from disk. All work stays in your browser.</p>
+      <div class="hint" id="hint-load">Tip: start with a small Q4/Q8 model (&lt;100MB) for quant experiments. After quant/prune, use <b>Export</b> — files are rewritten with 32-byte tensor alignment for llamafile.</div>
       <div class="card">
         <div class="row">
           <input type="file" id="file" accept=".gguf" />
@@ -122,7 +145,33 @@
       <h1>Fine-tune</h1>
       <p class="sub">In-browser training for tiny models. LoRA, response-only mask, ChatML-style templates.</p>
       <div class="card">
-        <h2>Dataset</h2>
+        <h2>Dataset <span class="badge">upload or paste</span></h2>
+        <div class="hint">
+          Upload <code>.jsonl</code>, <code>.json</code>, <code>.txt</code>, or <code>.csv</code>. The parser will detect format and show a preview.
+          Or paste lines like <code>{"messages":[...]}</code> below.
+        </div>
+        <div class="row">
+          <input type="file" id="datasetFile" accept=".jsonl,.json,.txt,.csv,.tsv" />
+          <button id="btnParseDataset" class="primary">Parse dataset</button>
+          <span id="datasetStatus" class="muted">No dataset</span>
+        </div>
+        <div id="datasetAssist" class="card" style="display:none;background:#0a0e14;margin-top:10px">
+          <h2 style="margin-top:0">Parsing assistant</h2>
+          <div class="row">
+            <label>Detected</label>
+            <select id="dsDetectedFormat">
+              <option value="messages">messages (OpenAI/ChatML JSONL)</option>
+              <option value="sharegpt">sharegpt (from/value or conversations)</option>
+              <option value="alpaca">alpaca (instruction/input/output)</option>
+              <option value="csv">csv (prompt,response columns)</option>
+              <option value="text">plain text (one sample per line)</option>
+            </select>
+            <label>prompt col</label><input type="text" id="dsPromptCol" value="prompt" style="width:90px" />
+            <label>response col</label><input type="text" id="dsResponseCol" value="response" style="width:90px" />
+            <button id="btnApplyParse">Apply → training box</button>
+          </div>
+          <div id="datasetPreview" class="log parse-preview muted">Preview…</div>
+        </div>
         <textarea id="dataset" placeholder='{"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello!"}]}'></textarea>
         <div class="row">
           <label>format</label>
@@ -194,6 +243,7 @@
     <div id="view-export" class="view">
       <h1>Export GGUF</h1>
       <p class="sub">Full rewrite with per-tensor 32-byte alignment (fixes llamafile offset errors).</p>
+      <div class="hint">Always re-download after quant — do not reuse a previous broken export. Prefer Q4_0 for phone/llamafile over studio Q2_0.</div>
       <div class="card">
         <div class="row">
           <label>Also quant selected as</label>

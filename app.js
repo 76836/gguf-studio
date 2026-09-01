@@ -556,8 +556,25 @@ let selected = new Set();
 let pending = new Map(); // tensor index → quantized payload
 
 const $ = (id) => document.getElementById(id);
+function showLoading(msg) {
+  let el = $("globalLoading");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "globalLoading";
+    el.innerHTML = '<div class="spinner"></div><div class="loading-msg"></div>';
+    document.body.appendChild(el);
+  }
+  el.querySelector(".loading-msg").textContent = msg || "Working…";
+  el.classList.add("show");
+}
+function hideLoading() {
+  const el = $("globalLoading");
+  if (el) el.classList.remove("show");
+}
+
 const log = (el, msg, cls = "") => {
   const node = $(el);
+  if (!node) { console.log(el, msg); return; }
   const line = document.createElement("div");
   if (cls) line.className = cls;
   line.textContent = msg;
@@ -726,6 +743,7 @@ $("btnParse").addEventListener("click", async () => {
   const f = $("file").files?.[0];
   if (!f) { setStatus("Pick a .gguf file first", "err"); return; }
   setStatus("Reading…", "warn");
+  showLoading("Parsing GGUF…");
   try {
     const buf = await f.arrayBuffer();
     model = parseGguf(buf);
@@ -735,10 +753,13 @@ $("btnParse").addEventListener("click", async () => {
     renderMeta();
     renderTensors();
     setStatus(`Loaded ${f.name} — ${model.tensors.length} tensors`, "ok");
-    $("opLog").textContent = "";
+    if ($("opLog")) $("opLog").textContent = "";
+    hideLoading();
   } catch (e) {
     setStatus(String(e.message || e), "err");
     console.error(e);
+  } finally {
+    hideLoading();
   }
 });
 
@@ -1313,5 +1334,225 @@ if ($("btnDropSelected")) {
     renderMeta();
     renderTensors();
     log("layerLog", `Dropped selected layers → ${mapping.size} blocks, ${newTensors.length} tensors`, "ok");
+  };
+}
+
+// Test / automation hooks
+window.__ggufStudio = {
+  parseBuffer: (ab, name = "test.gguf") => {
+    model = parseGguf(ab);
+    model.fileName = name;
+    selected = new Set();
+    pending = new Map();
+    renderMeta();
+    renderTensors();
+    setStatus(`Loaded ${name} — ${model.tensors.length} tensors`, "ok");
+    return { tensors: model.tensors.length, meta: model.metadata };
+  },
+  getModel: () => model,
+  writeBuffer: () => writeGguf(model, pending),
+  quantSelected: (dtype) => {
+    if ($("targetDtype")) $("targetDtype").value = dtype;
+    $("btnQuant")?.click();
+  },
+  selectAll: () => { if (model) { model.tensors.forEach((_, i) => selected.add(i)); renderTensors(); } },
+};
+
+// ---- Dataset parsing assistant ----
+let _rawDatasetText = "";
+let _parsedPreview = [];
+
+function detectDatasetFormat(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { format: "text", samples: [] };
+  const samples = [];
+  // try JSONL first
+  let jsonlOk = 0;
+  for (const line of lines.slice(0, 20)) {
+    try {
+      const o = JSON.parse(line);
+      jsonlOk++;
+      if (o.messages && Array.isArray(o.messages)) {
+        samples.push(o);
+      } else if (o.conversations || (o.from && o.value) || Array.isArray(o)) {
+        samples.push(o);
+      } else if (o.instruction != null || o.input != null || o.output != null) {
+        samples.push(o);
+      } else if (o.prompt != null || o.response != null || o.completion != null) {
+        samples.push(o);
+      } else {
+        samples.push(o);
+      }
+    } catch {
+      break;
+    }
+  }
+  if (jsonlOk >= Math.min(3, lines.length) && jsonlOk === Math.min(20, lines.length)) {
+    const first = samples[0] || {};
+    if (first.messages) return { format: "messages", samples, lines };
+    if (first.instruction != null || first.output != null) return { format: "alpaca", samples, lines };
+    if (first.conversations || first.from) return { format: "sharegpt", samples, lines };
+    return { format: "messages", samples, lines };
+  }
+  // full JSON array?
+  try {
+    const o = JSON.parse(text);
+    if (Array.isArray(o) && o.length) {
+      if (o[0].messages) return { format: "messages", samples: o.slice(0, 20), lines };
+      if (o[0].instruction != null) return { format: "alpaca", samples: o.slice(0, 20), lines };
+      return { format: "messages", samples: o.slice(0, 20), lines };
+    }
+  } catch (_) {}
+  // CSV
+  if (lines[0].includes(",") && (lines[0].toLowerCase().includes("prompt") || lines[0].toLowerCase().includes("instruction"))) {
+    return { format: "csv", samples: lines.slice(0, 10), lines };
+  }
+  return { format: "text", samples: lines.slice(0, 10), lines };
+}
+
+function normalizeToMessages(format, rawText, promptCol, responseCol) {
+  const out = [];
+  const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (format === "text") {
+    for (const line of lines) {
+      out.push({ messages: [
+        { role: "user", content: "Say this:" },
+        { role: "assistant", content: line },
+      ]});
+    }
+    return out;
+  }
+  if (format === "csv") {
+    const header = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+    const pi = header.findIndex((h) => h.toLowerCase() === promptCol.toLowerCase() || h.toLowerCase() === "prompt" || h.toLowerCase() === "instruction");
+    const ri = header.findIndex((h) => h.toLowerCase() === responseCol.toLowerCase() || h.toLowerCase() === "response" || h.toLowerCase() === "output" || h.toLowerCase() === "completion");
+    for (const line of lines.slice(1)) {
+      // naive CSV split
+      const cols = line.match(/("([^"]|"")*"|[^,]*)/g)?.map((c) => c.replace(/^"|"$/g, "").replace(/""/g, '"')) || line.split(",");
+      const prompt = cols[pi >= 0 ? pi : 0] || "";
+      const resp = cols[ri >= 0 ? ri : 1] || "";
+      if (!prompt && !resp) continue;
+      out.push({ messages: [
+        { role: "user", content: String(prompt) },
+        { role: "assistant", content: String(resp) },
+      ]});
+    }
+    return out;
+  }
+  // JSONL / JSON objects
+  let objs = [];
+  try {
+    const o = JSON.parse(rawText);
+    if (Array.isArray(o)) objs = o;
+  } catch (_) {
+    for (const line of lines) {
+      try { objs.push(JSON.parse(line)); } catch (_) {}
+    }
+  }
+  for (const o of objs) {
+    if (format === "messages" && o.messages) {
+      out.push({ messages: o.messages });
+    } else if (format === "alpaca") {
+      const user = [o.instruction, o.input].filter(Boolean).join("\n");
+      out.push({ messages: [
+        { role: "user", content: user || "" },
+        { role: "assistant", content: o.output || o.response || "" },
+      ]});
+    } else if (format === "sharegpt") {
+      const conv = o.conversations || o.conversation || [];
+      if (conv.length) {
+        const messages = conv.map((c) => ({
+          role: (c.from === "human" || c.from === "user") ? "user" : "assistant",
+          content: c.value || c.content || "",
+        }));
+        out.push({ messages });
+      } else if (o.from && o.value) {
+        // single turn leftover — skip
+      }
+    } else if (o.prompt != null) {
+      out.push({ messages: [
+        { role: "user", content: String(o.prompt) },
+        { role: "assistant", content: String(o.response || o.completion || o.output || "") },
+      ]});
+    } else if (o.messages) {
+      out.push({ messages: o.messages });
+    }
+  }
+  return out;
+}
+
+if ($("datasetFile")) {
+  $("datasetFile").addEventListener("change", async () => {
+    const f = $("datasetFile").files?.[0];
+    if (!f) return;
+    showLoading("Reading dataset…");
+    try {
+      _rawDatasetText = await f.text();
+      const det = detectDatasetFormat(_rawDatasetText);
+      if ($("dsDetectedFormat")) $("dsDetectedFormat").value = det.format;
+      if ($("datasetAssist")) $("datasetAssist").style.display = "block";
+      if ($("datasetStatus")) {
+        $("datasetStatus").textContent = `${f.name}: ~${det.lines?.length || 0} lines, detected ${det.format}`;
+        $("datasetStatus").className = "ok";
+      }
+      if ($("datasetPreview")) {
+        $("datasetPreview").textContent = JSON.stringify(det.samples.slice(0, 5), null, 2).slice(0, 2500);
+      }
+    } catch (e) {
+      if ($("datasetStatus")) {
+        $("datasetStatus").textContent = String(e.message || e);
+        $("datasetStatus").className = "err";
+      }
+    } finally {
+      hideLoading();
+    }
+  });
+}
+
+if ($("btnParseDataset")) {
+  $("btnParseDataset").onclick = () => {
+    const text = _rawDatasetText || $("dataset")?.value || "";
+    if (!text.trim()) {
+      if ($("datasetStatus")) {
+        $("datasetStatus").textContent = "Paste or upload data first";
+        $("datasetStatus").className = "warn";
+      }
+      return;
+    }
+    _rawDatasetText = text;
+    const det = detectDatasetFormat(text);
+    if ($("dsDetectedFormat")) $("dsDetectedFormat").value = det.format;
+    if ($("datasetAssist")) $("datasetAssist").style.display = "block";
+    if ($("datasetPreview")) {
+      $("datasetPreview").textContent = JSON.stringify(det.samples.slice(0, 5), null, 2).slice(0, 2500);
+    }
+    if ($("datasetStatus")) {
+      $("datasetStatus").textContent = `Detected ${det.format} — review & Apply`;
+      $("datasetStatus").className = "ok";
+    }
+  };
+}
+
+if ($("btnApplyParse")) {
+  $("btnApplyParse").onclick = () => {
+    const format = $("dsDetectedFormat")?.value || "messages";
+    const promptCol = $("dsPromptCol")?.value || "prompt";
+    const responseCol = $("dsResponseCol")?.value || "response";
+    const raw = _rawDatasetText || $("dataset")?.value || "";
+    const msgs = normalizeToMessages(format, raw, promptCol, responseCol);
+    if (!msgs.length) {
+      if ($("datasetStatus")) {
+        $("datasetStatus").textContent = "No samples parsed — adjust format/columns";
+        $("datasetStatus").className = "err";
+      }
+      return;
+    }
+    const jsonl = msgs.map((m) => JSON.stringify(m)).join("\n");
+    if ($("dataset")) $("dataset").value = jsonl;
+    if ($("dsFormat")) $("dsFormat").value = "messages";
+    if ($("datasetStatus")) {
+      $("datasetStatus").textContent = `Applied ${msgs.length} samples as messages JSONL`;
+      $("datasetStatus").className = "ok";
+    }
   };
 }
