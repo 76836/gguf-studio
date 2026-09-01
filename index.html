@@ -3,249 +3,214 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GGUF Studio — inspect / quant / prune / finetune</title>
+  <title>GGUF Studio</title>
   <style>
+    :root {
+      --bg: #0b0f14; --panel: #111827; --sidebar: #0d1219; --border: #1f2937;
+      --text: #e5e7eb; --muted: #9ca3af; --accent: #6366f1; --danger: #ef4444; --input: #1a2332;
+    }
     * { box-sizing: border-box; }
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 12px; background: #0d1117; color: #c9d1d9; font-size: 13px; }
-    h1, h2, h3 { margin: 8px 0; color: #e6edf3; }
-    section { border: 1px solid #30363d; padding: 10px; margin-bottom: 12px; background: #161b22; }
-    button, select, input[type=file], input[type=number], input[type=text] { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 6px 10px; margin: 2px; }
-    button { cursor: pointer; }
-    button:hover { background: #30363d; }
-    button.primary { background: #238636; border-color: #2ea043; }
-    button.danger { background: #da3633; border-color: #f85149; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { border: 1px solid #30363d; padding: 4px 6px; text-align: left; }
-    th { background: #21262d; position: sticky; top: 0; }
-    .scroll { max-height: 360px; overflow: auto; }
-    pre, .log { background: #0d1117; border: 1px solid #30363d; padding: 8px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
-    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
-    .muted { color: #8b949e; }
-    .ok { color: #3fb950; }
-    .warn { color: #d29922; }
-    .err { color: #f85149; }
-    label { margin-right: 4px; }
-    #status { min-height: 1.2em; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; height: 100vh; display: flex; overflow: hidden; }
+    .sidebar { width: 220px; min-width: 220px; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; }
+    .brand { font-weight: 700; font-size: 16px; padding: 8px 10px 16px; }
+    .brand span { color: var(--accent); }
+    .nav-btn { text-align: left; background: transparent; border: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .nav-btn:hover { background: #1a2332; color: var(--text); }
+    .nav-btn.active { background: #1e1b4b; color: #c7d2fe; }
+    .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; padding: 14px 12px 6px; }
+    .main { flex: 1; overflow: auto; padding: 20px 24px 40px; }
+    .view { display: none; max-width: 1100px; }
+    .view.active { display: block; }
+    h1 { font-size: 22px; margin: 0 0 6px; font-weight: 650; }
+    h2 { font-size: 15px; margin: 18px 0 10px; color: #d1d5db; font-weight: 600; }
+    .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+    button, select, input[type=file], input[type=number], input[type=text], textarea {
+      background: var(--input); color: var(--text); border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    }
+    button { cursor: pointer; font-weight: 500; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.good { background: #166534; border-color: #16a34a; color: #fff; }
+    button.danger { background: #7f1d1d; border-color: var(--danger); color: #fecaca; }
+    label { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+    th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+    th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+    .scroll { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+    pre, .log { background: #0a0e14; border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9ca3af; }
+    .ok { color: #4ade80; } .warn { color: #fbbf24; } .err { color: #f87171; } .muted { color: var(--muted); }
+    textarea { width: 100%; min-height: 120px; resize: vertical; }
+    .chat-box { display: flex; flex-direction: column; gap: 10px; min-height: 360px; background: #0a0e14; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .chat-messages { flex: 1; overflow: auto; max-height: 420px; display: flex; flex-direction: column; gap: 8px; }
+    .bubble { max-width: 85%; padding: 10px 12px; border-radius: 12px; line-height: 1.45; white-space: pre-wrap; }
+    .bubble.user { align-self: flex-end; background: #312e81; }
+    .bubble.assistant { align-self: flex-start; background: #1f2937; }
+    .chat-input-row { display: flex; gap: 8px; }
+    .chat-input-row textarea { min-height: 44px; flex: 1; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 800px) { body { flex-direction: column; } .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; min-width: 0; } .grid2 { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <h1>GGUF Studio</h1>
-  <p class="muted">Functionality-first: load GGUF → inspect tensors → selective quant/prune → export. Training drives <code>gguf-trainer</code> (Deno) via generated commands / optional local bridge.</p>
-
-  <section>
-    <h2>1. Load model</h2>
-    <div class="row">
-      <input type="file" id="file" accept=".gguf" />
-      <button id="btnParse">Parse header + tensors</button>
-      <span id="status" class="muted">No file</span>
+  <aside class="sidebar">
+    <div class="brand">GGUF <span>Studio</span></div>
+    <div class="nav-section">Model</div>
+    <button class="nav-btn active" data-view="load">Load / Inspect</button>
+    <button class="nav-btn" data-view="edit">Quant / Prune</button>
+    <button class="nav-btn" data-view="layers">Layers</button>
+    <div class="nav-section">Train</div>
+    <button class="nav-btn" data-view="train">Fine-tune</button>
+    <div class="nav-section">Use</div>
+    <button class="nav-btn" data-view="chat">Chat (wllama)</button>
+    <button class="nav-btn" data-view="export">Export</button>
+  </aside>
+  <main class="main">
+    <div id="view-load" class="view active">
+      <h1>Load model</h1>
+      <p class="sub">Open a GGUF from disk. All work stays in your browser.</p>
+      <div class="card">
+        <div class="row">
+          <input type="file" id="file" accept=".gguf" />
+          <button id="btnParse" class="primary">Parse</button>
+          <span id="status" class="muted">No file</span>
+        </div>
+        <div id="meta" class="log muted">Metadata will appear here.</div>
+      </div>
     </div>
-    <div id="meta" class="log muted">Metadata will appear here.</div>
-  </section>
-
-  <section>
-    <h2>2. Layers / tensors</h2>
-    <div class="row">
-      <button id="btnSelectAll">Select all</button>
-      <button id="btnSelectNone">Select none</button>
-      <button id="btnSelectLinear">Select *weight (linear-ish)</button>
-      <button id="btnSelectAttn">Select attn.*</button>
-      <button id="btnSelectFFN">Select ffn / mlp.*</button>
-    </div>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="chkMaster" /></th>
-            <th>#</th>
-            <th>Name</th>
-            <th>Shape</th>
-            <th>Dtype</th>
-            <th>Offset</th>
-            <th>Bytes (approx)</th>
-          </tr>
-        </thead>
+    <div id="view-edit" class="view">
+      <h1>Quantize &amp; prune</h1>
+      <p class="sub">Select tensors, quantize or magnitude-prune. Export writes 32-byte aligned GGUF for llamafile.</p>
+      <div class="card">
+        <div class="row">
+          <button id="btnSelectAll">Select all</button>
+          <button id="btnSelectNone">Select none</button>
+          <button id="btnSelectLinear">Select *weight</button>
+          <select id="targetDtype">
+            <option value="Q4_0">Q4_0</option>
+            <option value="Q8_0">Q8_0</option>
+            <option value="Q2_0">Q2_0 (studio)</option>
+            <option value="F16">F16</option>
+            <option value="F32">F32</option>
+          </select>
+          <button id="btnQuant" class="primary">Quant selected</button>
+          <button id="btnPrune">Magnitude prune %</button>
+          <input type="number" id="prunePct" value="10" min="1" max="90" style="width:70px" />
+          <button id="btnClearPending" class="danger">Clear pending</button>
+        </div>
+        <div id="opLog" class="log"></div>
+      </div>
+      <div class="card"><div class="scroll"><table>
+        <thead><tr><th></th><th>name</th><th>dtype</th><th>dims</th><th>nbytes</th></tr></thead>
         <tbody id="tensorBody"></tbody>
-      </table>
+      </table></div></div>
     </div>
-    <h3 style="margin-top:12px">Structural layer drop (real speedup)</h3>
-    <p class="muted">Zeroing weights does <b>not</b> make inference faster. Dropping whole <code>blk.N</code> blocks does — tensors are removed, remaining blocks are renumbered, and <code>*.block_count</code> metadata is updated. Export a new GGUF after this.</p>
-    <div class="row">
-      <div id="layerList" class="log muted" style="min-width:280px;max-height:160px">Load a GGUF to list layers.</div>
+    <div id="view-layers" class="view">
+      <h1>Structural layers</h1>
+      <p class="sub">Drop entire blocks (blk.N.*) — real size/speed change.</p>
+      <div class="card">
+        <div class="row">
+          <label>Keep first N layers</label>
+          <input type="number" id="keepLayers" value="6" min="1" style="width:70px" />
+          <button id="btnDropTail" class="primary">Drop tail layers</button>
+          <button id="btnDropSelected">Drop selected blk.*</button>
+        </div>
+        <div id="layerLog" class="log"></div>
+      </div>
     </div>
-    <div class="row">
-      <button id="btnDropLayers" class="danger">Drop unchecked layers</button>
-      <button id="btnKeepAllLayers">Keep all layers</button>
-      <span id="layerStatus" class="muted"></span>
+    <div id="view-train" class="view">
+      <h1>Fine-tune</h1>
+      <p class="sub">In-browser training for tiny models. LoRA, response-only mask, ChatML-style templates.</p>
+      <div class="card">
+        <h2>Dataset</h2>
+        <textarea id="dataset" placeholder='{"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello!"}]}'></textarea>
+        <div class="row">
+          <label>format</label>
+          <select id="dsFormat"><option value="messages">messages</option><option value="sharegpt">sharegpt</option><option value="text">text</option></select>
+          <label>template</label>
+          <select id="chatTpl"><option value="chatml">ChatML</option><option value="llama3">Llama3</option><option value="vicuna">Vicuna</option></select>
+          <label><input type="checkbox" id="trainOnResp" checked /> train on assistant only</label>
+        </div>
+      </div>
+      <div class="card grid2">
+        <div>
+          <h2>LoRA / optim</h2>
+          <div class="row">
+            <label><input type="checkbox" id="trainUseLora" checked /> LoRA</label>
+            <label>r</label><input type="number" id="trainLoraR" value="8" style="width:60px" />
+            <label>α</label><input type="number" id="trainLoraAlpha" value="16" style="width:60px" />
+          </div>
+          <div class="row">
+            <label>steps</label><input type="number" id="trainSteps" value="50" style="width:70px" />
+            <label>seq</label><input type="number" id="trainSeq" value="128" style="width:70px" />
+            <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:70px" />
+          </div>
+          <div class="row">
+            <label>fake-quant</label>
+            <select id="trainFakeQuant"><option value="none">none</option><option value="Q4_0">Q4_0</option><option value="Q8_0">Q8_0</option><option value="Q2_0">Q2_0</option></select>
+            <label>write-back quant</label>
+            <select id="trainExportQuant"><option value="Q4_0">Q4_0</option><option value="Q8_0">Q8_0</option><option value="F16">F16</option><option value="keep">keep</option></select>
+          </div>
+        </div>
+        <div>
+          <h2>Scratch (no GGUF)</h2>
+          <div class="row">
+            <label>emb</label><input type="number" id="scratchEmb" value="128" style="width:60px" />
+            <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:50px" />
+            <label>heads</label><input type="number" id="scratchHeads" value="4" style="width:50px" />
+            <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:60px" />
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <button id="btnTrain" class="primary">Start training</button>
+          <button id="btnTrainStop" class="danger">Stop</button>
+          <span id="trainStatus" class="muted">Idle</span>
+        </div>
+        <div id="trainLog" class="log"></div>
+      </div>
     </div>
-  </section>
-
-  <section>
-    <h2>3. Selective quantize / prune (weight magnitude)</h2>
-    <p class="muted">Built-in quantizers: <b>F32, F16, Q8_0, Q4_0, studio-Q2_0</b>. Selected tensors are dequantized → requantized and stored as overrides; <b>Export rebuilds a full GGUF</b> with corrected offsets and sizes. Magnitude prune zeros small values (does not remove layers).</p>
-    <div class="row">
-      <label>Prune threshold (abs)</label>
-      <input type="number" id="pruneThr" value="0.01" step="0.001" min="0" style="width:90px" />
-      <button id="btnPrune" class="danger">Prune selected</button>
+    <div id="view-chat" class="view">
+      <h1>Chat</h1>
+      <p class="sub">Inference via wllama (llama.cpp WASM). Load the current in-memory GGUF or pick a file.</p>
+      <div class="card">
+        <div class="row">
+          <button id="btnChatLoad" class="primary">Load current GGUF into wllama</button>
+          <input type="file" id="chatFile" accept=".gguf" />
+          <label>n_predict</label><input type="number" id="chatNPredict" value="64" style="width:70px" />
+          <label>temp</label><input type="text" id="chatTemp" value="0.7" style="width:60px" />
+          <span id="chatStatus" class="muted">Not loaded</span>
+        </div>
+      </div>
+      <div class="card chat-box">
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="chat-input-row">
+          <textarea id="chatInput" placeholder="Message…" rows="2"></textarea>
+          <button id="btnChatSend" class="primary">Send</button>
+        </div>
+      </div>
     </div>
-    <div class="row">
-      <label>Target quant</label>
-      <select id="quantType">
-        <option value="Q4_0">Q4_0</option>
-        <option value="Q8_0">Q8_0</option>
-        <option value="Q2_0">Q2_0 (studio)</option>
-        <option value="F16">F16</option>
-        <option value="F32">F32</option>
-      </select>
-      <button id="btnQuant">Quantize selected</button>
-      <button id="btnQuantAll">Quantize ALL tensors</button>
-      <button id="btnClearPending">Clear pending overrides</button>
+    <div id="view-export" class="view">
+      <h1>Export GGUF</h1>
+      <p class="sub">Full rewrite with per-tensor 32-byte alignment (fixes llamafile offset errors).</p>
+      <div class="card">
+        <div class="row">
+          <label>Also quant selected as</label>
+          <select id="exportQuant">
+            <option value="keep">keep pending / original</option>
+            <option value="Q4_0">Q4_0</option>
+            <option value="Q8_0">Q8_0</option>
+            <option value="Q2_0">Q2_0 (studio)</option>
+            <option value="F16">F16</option>
+            <option value="F32">F32</option>
+          </select>
+          <button id="btnExport" class="good">Download GGUF</button>
+        </div>
+        <div id="exportLog" class="log"></div>
+      </div>
     </div>
-    <div class="row">
-      <label>On export, also quant selected as</label>
-      <select id="exportQuant">
-        <option value="keep">keep (use pending only)</option>
-        <option value="Q4_0">Q4_0</option>
-        <option value="Q8_0">Q8_0</option>
-        <option value="Q2_0">Q2_0 (studio)</option>
-        <option value="F16">F16</option>
-        <option value="F32">F32</option>
-      </select>
-      <button id="btnExport" class="primary">Export modified GGUF</button>
-    </div>
-    <div id="opLog" class="log"></div>
-  </section>
-
-  <section>
-    <h2>4. Unsloth-compatible job config</h2>
-    <p class="muted">
-      Configure a job the same way you would in <b>Unsloth Studio</b>, then
-      <b>Export Unsloth script + config</b> and run it there for production results.
-      Browser training cannot match Unsloth numerics/kernels; config parity is the goal.
-    </p>
-    <div class="row">
-      <label>model</label>
-      <input type="text" id="usModel" value="unsloth/SmolLM2-135M" style="width:220px" />
-      <label>max_seq</label>
-      <input type="number" id="usMaxSeq" value="2048" style="width:80px" />
-      <label><input type="checkbox" id="usLoad4bit" checked /> load_in_4bit</label>
-      <label>type</label>
-      <select id="usTrainType">
-        <option value="lora">LoRA</option>
-        <option value="full">full FT</option>
-      </select>
-    </div>
-    <div class="row">
-      <label>lora_r</label><input type="number" id="usLoraR" value="16" style="width:60px" />
-      <label>lora_alpha</label><input type="number" id="usLoraAlpha" value="16" style="width:60px" />
-      <label>lora_dropout</label><input type="text" id="usLoraDrop" value="0" style="width:50px" />
-      <label>targets</label>
-      <input type="text" id="usTargetModules" value="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj" style="width:320px" />
-    </div>
-    <div class="row">
-      <label>lr</label><input type="text" id="usLr" value="2e-4" style="width:70px" />
-      <label>batch</label><input type="number" id="usBatch" value="2" style="width:50px" />
-      <label>grad_accum</label><input type="number" id="usGradAccum" value="4" style="width:50px" />
-      <label>warmup</label><input type="number" id="usWarmup" value="5" style="width:50px" />
-      <label>epochs</label><input type="number" id="usEpochs" value="1" style="width:50px" />
-      <label>max_steps</label><input type="number" id="usMaxSteps" value="-1" style="width:60px" />
-      <label>wd</label><input type="text" id="usWd" value="0.01" style="width:50px" />
-    </div>
-    <div class="row">
-      <label>optim</label>
-      <select id="usOptim"><option>adamw_8bit</option><option>adamw_torch</option></select>
-      <label>scheduler</label>
-      <select id="usSched"><option>linear</option><option>cosine</option><option>constant</option></select>
-      <label>seed</label><input type="number" id="usSeed" value="3407" style="width:70px" />
-      <label>out</label><input type="text" id="usOutDir" value="outputs" style="width:100px" />
-      <label><input type="checkbox" id="usPacking" /> packing</label>
-      <label><input type="checkbox" id="usTrainOnResp" checked /> train_on_responses_only</label>
-    </div>
-    <div class="row">
-      <label>chat template</label>
-      <select id="usChatTpl">
-        <option value="chatml">ChatML</option>
-        <option value="llama3">Llama 3</option>
-        <option value="gemma">Gemma</option>
-        <option value="alpaca">Alpaca</option>
-      </select>
-      <label>dataset format</label>
-      <select id="usDataFmt">
-        <option value="messages">messages JSONL</option>
-        <option value="sharegpt">ShareGPT JSONL</option>
-        <option value="text">plain text lines</option>
-      </select>
-    </div>
-    <div class="row">
-      <textarea id="trainData" rows="8" style="width:100%; background:#0d1117; color:#c9d1d9; border:1px solid #30363d;" placeholder='One example per line. messages JSONL:&#10;{"messages":[{"role":"user","content":"walk forward"},{"role":"assistant","content":"OK, walking forward."}]}&#10;ShareGPT:&#10;{"conversations":[{"from":"human","value":"hi"},{"from":"gpt","value":"hello"}]}'></textarea>
-    </div>
-    <div class="row">
-      <button id="btnExportUnsloth" class="primary">Export Unsloth config + train.py</button>
-      <button id="btnCopyUnslothCfg">Copy config JSON</button>
-      <span id="usExportStatus" class="muted"></span>
-    </div>
-    <pre id="usCfgPreview" class="log muted">Config preview appears after export.</pre>
-  </section>
-
-  <section>
-    <h2>5. In-browser approx fine-tune (tiny only)</h2>
-    <p class="muted">
-      Approximate trainer for tiny models. Uses the dataset + <b>train_on_responses_only</b> mask above when possible.
-      <b>Will not match Unsloth loss/weights.</b> For real jobs use Export Unsloth script.
-    </p>
-    <div class="row">
-      <label>Source</label>
-      <select id="trainSource">
-        <option value="gguf">Continue from loaded GGUF</option>
-        <option value="scratch">Train tiny net from scratch</option>
-      </select>
-      <label>Fake-quant forward</label>
-      <select id="fakeQuant">
-        <option value="none">none (pure F32)</option>
-        <option value="Q4_0">Q4_0</option>
-        <option value="Q8_0">Q8_0</option>
-        <option value="Q2_0">Q2_0</option>
-      </select>
-      <label>Export after as</label>
-      <select id="trainExportQuant">
-        <option value="Q4_0">Q4_0</option>
-        <option value="Q8_0">Q8_0</option>
-        <option value="Q2_0">Q2_0</option>
-        <option value="F16">F16</option>
-        <option value="F32">F32</option>
-      </select>
-    </div>
-    <div class="row">
-      <label>steps</label><input type="number" id="trainSteps" value="50" style="width:70px" />
-      <label>seq-len</label><input type="number" id="trainSeq" value="128" style="width:70px" />
-      <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:70px" />
-      <label>scratch: emb</label><input type="number" id="scratchEmb" value="128" style="width:60px" />
-      <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:50px" />
-      <label>heads</label><input type="number" id="scratchHeads" value="4" style="width:50px" />
-      <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:60px" />
-    </div>
-    <div class="row">
-      <label><input type="checkbox" id="trainUseLora" checked /> LoRA</label>
-      <label>r</label><input type="number" id="trainLoraR" value="8" style="width:50px" />
-      <label>alpha</label><input type="number" id="trainLoraAlpha" value="16" style="width:50px" />
-      <span class="muted">Base frozen; adapters merge into dense GGUF on export.</span>
-    </div>
-    <div class="row">
-      <button id="btnTrain" class="primary">Start training</button>
-      <button id="btnTrainStop" class="danger">Stop</button>
-      <span id="trainStatus" class="muted">Idle</span>
-    </div>
-    <div id="trainLog" class="log"></div>
-  </section>
-
-  <section>
-    <h2>6. Notes</h2>
-    <ul class="muted">
-      <li><b>LoRA:</b> trains low-rank adapters only, then merges into base weights for a standalone Q4_0/Q8_0 GGUF.</li>
-      <li><b>Quant export:</b> F32, F16, Q8_0, Q4_0, studio Q2_0.</li>
-      <li>All work stays local in the tab until you download exports.</li>
-    </ul>
-  </section>
-
+  </main>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

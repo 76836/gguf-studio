@@ -499,7 +499,8 @@ function writeGguf(model, overrides = new Map()) {
     w.writeValue(e.vtype, e.value);
   }
 
-  // Compute new offsets
+  // Compute new offsets — each tensor data must start on `alignment` boundary
+  // (llama.cpp rejects misaligned offsets, e.g. expected N+32, got N+4).
   let dataOffset = 0;
   const planned = [];
   for (let i = 0; i < model.tensors.length; i++) {
@@ -510,15 +511,17 @@ function writeGguf(model, overrides = new Map()) {
     let nbytes;
     if (ov) {
       dtype = ov.dtype;
-      data = ov.data;
+      data = ov.data instanceof Uint8Array ? ov.data : new Uint8Array(ov.data);
       nbytes = data.byteLength;
     } else {
       data = new Uint8Array(model.buffer, t.absoluteOffset, t.nbytes);
       nbytes = t.nbytes;
     }
+    // pad dataOffset up to alignment
+    const mis = dataOffset % alignment;
+    if (mis) dataOffset += alignment - mis;
     planned.push({ t, dtype, data, nbytes, offset: dataOffset });
     dataOffset += nbytes;
-    // no per-tensor alignment required beyond global; llama uses packed
   }
 
   for (const p of planned) {
@@ -530,8 +533,16 @@ function writeGguf(model, overrides = new Map()) {
   }
 
   w.align(alignment);
+  let cursor = 0; // relative to start of data section
   for (const p of planned) {
-    w.writeBytes(p.data instanceof Uint8Array ? p.data : new Uint8Array(p.data));
+    // pad writer to match planned offset
+    while (cursor < p.offset) {
+      w.writeBytes(new Uint8Array(1));
+      cursor += 1;
+    }
+    const bytes = p.data instanceof Uint8Array ? p.data : new Uint8Array(p.data);
+    w.writeBytes(bytes);
+    cursor += bytes.byteLength;
   }
 
   return w.toBuffer();
@@ -731,7 +742,7 @@ $("btnParse").addEventListener("click", async () => {
   }
 });
 
-$("chkMaster").addEventListener("change", (e) => {
+if ($("chkMaster")) $("chkMaster").addEventListener("change", (e) => {
   if (!model) return;
   if (e.target.checked) model.tensors.forEach((_, i) => selected.add(i));
   else selected.clear();
@@ -740,13 +751,13 @@ $("chkMaster").addEventListener("change", (e) => {
 $("btnSelectAll").onclick = () => { if (model) { model.tensors.forEach((_, i) => selected.add(i)); renderTensors(); } };
 $("btnSelectNone").onclick = () => { selected.clear(); renderTensors(); };
 $("btnSelectLinear").onclick = () => selectBy((t) => /weight$/i.test(t.name) && !/norm/i.test(t.name));
-$("btnSelectAttn").onclick = () => selectBy((t) => /attn|attention/i.test(t.name));
-$("btnSelectFFN").onclick = () => selectBy((t) => /ffn|mlp|feed_forward/i.test(t.name));
+if ($("btnSelectAttn")) $("btnSelectAttn").onclick = () => selectBy((t) => /attn|attention/i.test(t.name));
+if ($("btnSelectFFN")) $("btnSelectFFN").onclick = () => selectBy((t) => /ffn|mlp|feed_forward/i.test(t.name));
 
 // ---- Prune ----
 $("btnPrune").onclick = () => {
   if (!model || selected.size === 0) { log("opLog", "Nothing selected", "err"); return; }
-  const thr = Number($("pruneThr").value) || 0;
+  const thr = Number($("pruneThr")?.value) || (Number($("prunePct")?.value) || 10) / 100;
   let touched = 0, zerosed = 0;
   for (const i of selected) {
     const t = model.tensors[i];
@@ -834,7 +845,7 @@ $("btnQuant").onclick = () => {
   log("opLog", `Quantize done: ${ok} ok, ${fail} failed`, ok ? "ok" : "err");
 };
 
-$("btnQuantAll").onclick = () => {
+if ($("btnQuantAll")) $("btnQuantAll").onclick = () => {
   if (!model) return;
   model.tensors.forEach((_, i) => selected.add(i));
   renderTensors();
@@ -975,7 +986,15 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
   $("trainStatus").textContent = "Loading trainer…";
   let TinyLM, loadTinyLMFromGguf, tinyLMToPending;
   try {
-    const mod = await import("./train.js");
+    let mod;
+    try {
+      mod = await import("./train.js");
+    } catch (ie) {
+      tlog("Failed to load train.js / quant.js: " + (ie.message || ie), "err");
+      console.error(ie);
+      $("trainStatus").textContent = "Module load error";
+      return;
+    }
     TinyLM = mod.TinyLM;
     loadTinyLMFromGguf = mod.loadTinyLMFromGguf;
     tinyLMToPending = mod.tinyLMToPending;
@@ -1067,4 +1086,232 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
   $("trainStatus").textContent = "Done";
 };
 
-setStatus("Ready — load a GGUF or configure an Unsloth job", "muted");
+setStatus("Ready — load a GGUF", "muted");
+
+// ---- Sidebar navigation ----
+document.querySelectorAll(".nav-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const v = btn.dataset.view;
+    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".view").forEach((el) => el.classList.remove("active"));
+    btn.classList.add("active");
+    const panel = document.getElementById("view-" + v);
+    if (panel) panel.classList.add("active");
+  });
+});
+
+// ---- wllama chat ----
+let wllamaInst = null;
+let chatBusy = false;
+
+function chatLog(role, text) {
+  const box = $("chatMessages");
+  if (!box) return;
+  const div = document.createElement("div");
+  div.className = "bubble " + role;
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function getWllama() {
+  const { Wllama } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm/index.js");
+  const { default: WasmFromCDN } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm/wasm-from-cdn.js");
+  return new Wllama(WasmFromCDN);
+}
+
+async function loadGgufIntoWllama(buf) {
+  if ($("chatStatus")) $("chatStatus").textContent = "Loading WASM / model…";
+  if (wllamaInst) {
+    try { await wllamaInst.exit(); } catch (_) {}
+  }
+  wllamaInst = await getWllama();
+  await wllamaInst.loadModel(new Blob([buf], { type: "application/octet-stream" }));
+  if ($("chatStatus")) {
+    $("chatStatus").textContent = "Ready";
+    $("chatStatus").className = "ok";
+  }
+}
+
+if ($("btnChatLoad")) {
+  $("btnChatLoad").onclick = async () => {
+    try {
+      if (!model) {
+        $("chatStatus").textContent = "Parse a GGUF first (or use file picker)";
+        $("chatStatus").className = "warn";
+        return;
+      }
+      // Prefer pending export buffer if we can rebuild quickly
+      const buf = writeGguf(model, pending);
+      await loadGgufIntoWllama(buf);
+      chatLog("assistant", "(model loaded)");
+    } catch (e) {
+      console.error(e);
+      if ($("chatStatus")) {
+        $("chatStatus").textContent = String(e.message || e);
+        $("chatStatus").className = "err";
+      }
+    }
+  };
+}
+
+if ($("chatFile")) {
+  $("chatFile").addEventListener("change", async () => {
+    const f = $("chatFile").files?.[0];
+    if (!f) return;
+    try {
+      const buf = await f.arrayBuffer();
+      await loadGgufIntoWllama(buf);
+      chatLog("assistant", "(loaded " + f.name + ")");
+    } catch (e) {
+      console.error(e);
+      if ($("chatStatus")) {
+        $("chatStatus").textContent = String(e.message || e);
+        $("chatStatus").className = "err";
+      }
+    }
+  });
+}
+
+async function chatSend() {
+  if (!wllamaInst || chatBusy) return;
+  const input = $("chatInput");
+  const text = (input?.value || "").trim();
+  if (!text) return;
+  input.value = "";
+  chatLog("user", text);
+  chatBusy = true;
+  if ($("chatStatus")) $("chatStatus").textContent = "Generating…";
+  try {
+    const nPredict = Number($("chatNPredict")?.value) || 64;
+    const temp = Number($("chatTemp")?.value) || 0.7;
+    // ChatML-ish prompt
+    const prompt = `<|im_start|>user\n${text}<|im_end|>\n<|im_start|>assistant\n`;
+    let out = "";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble assistant";
+    bubble.textContent = "";
+    $("chatMessages")?.appendChild(bubble);
+    await wllamaInst.createCompletion(prompt, {
+      nPredict,
+      sampling: { temp },
+      onNewToken: (_token, piece) => {
+        out += piece;
+        bubble.textContent = out;
+        $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+      },
+    });
+    if (!out) bubble.textContent = "(empty)";
+    if ($("chatStatus")) {
+      $("chatStatus").textContent = "Ready";
+      $("chatStatus").className = "ok";
+    }
+  } catch (e) {
+    console.error(e);
+    chatLog("assistant", "Error: " + (e.message || e));
+    if ($("chatStatus")) {
+      $("chatStatus").textContent = String(e.message || e);
+      $("chatStatus").className = "err";
+    }
+  }
+  chatBusy = false;
+}
+
+if ($("btnChatSend")) $("btnChatSend").onclick = () => chatSend();
+if ($("chatInput")) {
+  $("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      chatSend();
+    }
+  });
+}
+
+
+
+function keepFirstNLayers(n) {
+  if (!model) return;
+  const layers = listBlockLayers();
+  if (!layers.length) {
+    log("layerLog", "No blk.* layers found", "err");
+    return;
+  }
+  n = Math.max(1, Math.min(n, layers.length));
+  // Simulate layerKeep checkboxes
+  const keep = new Set(layers.filter((L) => L < n));
+  const mapping = new Map();
+  let ni = 0;
+  for (const L of layers) {
+    if (keep.has(L)) { mapping.set(L, ni); ni++; }
+  }
+  const newTensors = [];
+  for (const t of model.tensors) {
+    const m = /^blk\.(\d+)\.(.*)$/.exec(t.name);
+    if (!m) {
+      newTensors.push({ ...t, index: newTensors.length });
+      continue;
+    }
+    const oldL = Number(m[1]);
+    if (!mapping.has(oldL)) continue;
+    newTensors.push({ ...t, name: `blk.${mapping.get(oldL)}.${m[2]}`, index: newTensors.length });
+  }
+  for (const k of Object.keys(model.metadata)) {
+    if (k.endsWith(".block_count")) model.metadata[k] = mapping.size;
+  }
+  if (model.metadataRaw) {
+    for (const e of model.metadataRaw) {
+      if (e.key.endsWith(".block_count")) e.value = mapping.size;
+    }
+  }
+  pending = new Map();
+  model.tensors = newTensors;
+  selected = new Set();
+  renderMeta();
+  renderTensors();
+  log("layerLog", `Kept first ${n} layers → ${newTensors.length} tensors. Export to write GGUF.`, "ok");
+}
+if ($("btnDropTail")) {
+  $("btnDropTail").onclick = () => keepFirstNLayers(Number($("keepLayers")?.value) || 1);
+}
+if ($("btnDropSelected")) {
+  $("btnDropSelected").onclick = () => {
+    if (!model || selected.size === 0) return;
+    // keep tensors NOT selected that are blk, plus all non-blk
+    const dropLayers = new Set();
+    for (const i of selected) {
+      const m = model.tensors[i].name.match(/^blk\.(\d+)\./);
+      if (m) dropLayers.add(Number(m[1]));
+    }
+    const layers = listBlockLayers();
+    const keepN = layers.filter((L) => !dropLayers.has(L));
+    if (!keepN.length) { log("layerLog", "Would drop all layers", "err"); return; }
+    // rebuild keep set
+    const mapping = new Map();
+    let ni = 0;
+    for (const L of layers) {
+      if (!dropLayers.has(L)) { mapping.set(L, ni); ni++; }
+    }
+    const newTensors = [];
+    for (const t of model.tensors) {
+      const m = /^blk\.(\d+)\.(.*)$/.exec(t.name);
+      if (!m) { newTensors.push({ ...t, index: newTensors.length }); continue; }
+      const oldL = Number(m[1]);
+      if (!mapping.has(oldL)) continue;
+      newTensors.push({ ...t, name: `blk.${mapping.get(oldL)}.${m[2]}`, index: newTensors.length });
+    }
+    for (const k of Object.keys(model.metadata)) {
+      if (k.endsWith(".block_count")) model.metadata[k] = mapping.size;
+    }
+    if (model.metadataRaw) {
+      for (const e of model.metadataRaw) {
+        if (e.key.endsWith(".block_count")) e.value = mapping.size;
+      }
+    }
+    pending = new Map();
+    model.tensors = newTensors;
+    selected = new Set();
+    renderMeta();
+    renderTensors();
+    log("layerLog", `Dropped selected layers → ${mapping.size} blocks, ${newTensors.length} tensors`, "ok");
+  };
+}
