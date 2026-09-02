@@ -558,19 +558,36 @@ let pending = new Map(); // tensor index → quantized payload
 const $ = (id) => document.getElementById(id);
 function showLoading(msg) {
   let el = $("globalLoading");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "globalLoading";
-    el.innerHTML = '<div class="spinner"></div><div class="loading-msg"></div>';
-    document.body.appendChild(el);
-  }
-  el.querySelector(".loading-msg").textContent = msg || "Working…";
+  if (!el) return;
+  const m = el.querySelector(".loading-msg");
+  if (m) m.textContent = msg || "Working…";
   el.classList.add("show");
+  setProgress(5);
 }
 function hideLoading() {
   const el = $("globalLoading");
   if (el) el.classList.remove("show");
+  setProgress(0);
 }
+function setProgress(pct) {
+  const bar = $("progressBar");
+  if (!bar) return;
+  if (pct <= 0) { bar.classList.remove("show"); bar.style.width = "0%"; return; }
+  bar.classList.add("show");
+  bar.style.width = Math.min(100, Math.max(2, pct)) + "%";
+}
+function toast(msg, cls = "") {
+  const el = $("toast");
+  if (!el) { console.log("[toast]", msg); return; }
+  el.textContent = msg;
+  el.className = "show " + (cls || "");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.className = ""; }, 5000);
+}
+function yieldToUI() {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
 
 const log = (el, msg, cls = "") => {
   const node = $(el);
@@ -583,8 +600,11 @@ const log = (el, msg, cls = "") => {
 };
 
 function setStatus(msg, cls = "muted") {
-  $("status").className = cls;
-  $("status").textContent = msg;
+  const el = $("status");
+  if (!el) { console.log("[status]", msg); return; }
+  el.className = cls;
+  el.textContent = msg;
+  if (cls === "err") toast(msg, "err");
 }
 
 function renderMeta() {
@@ -605,7 +625,7 @@ function renderMeta() {
       lines.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`);
     }
   }
-  $("meta").textContent = lines.join("\n");
+  if ($("meta")) $("meta").textContent = lines.join("\n");
 }
 
 function renderTensors() {
@@ -673,13 +693,13 @@ function dropUncheckedLayers() {
   });
   if (keep.size === 0) {
     if ($("layerStatus")) {
-      $("layerStatus").textContent = "Keep at least one layer.";
-      $("layerStatus").className = "err";
+      ($("layerStatus")||{}).textContent = "Keep at least one layer.";
+      ($("layerStatus")||{}).className = "err";
     }
     return;
   }
   if (keep.size === layers.length) {
-    if ($("layerStatus")) $("layerStatus").textContent = "Nothing to drop.";
+    if ($("layerStatus")) ($("layerStatus")||{}).textContent = "Nothing to drop.";
     return;
   }
   const mapping = new Map();
@@ -718,8 +738,8 @@ function dropUncheckedLayers() {
   renderMeta();
   renderTensors();
   if ($("layerStatus")) {
-    $("layerStatus").textContent = `Kept ${newCount}/${layers.length} layers → ${newTensors.length} tensors. Export to write GGUF.`;
-    $("layerStatus").className = "ok";
+    ($("layerStatus")||{}).textContent = `Kept ${newCount}/${layers.length} layers → ${newTensors.length} tensors. Export to write GGUF.`;
+    ($("layerStatus")||{}).className = "ok";
   }
   log("opLog", `Structural drop: kept layers [${[...keep].sort((a, b) => a - b).join(",")}], block_count=${newCount}`, "ok");
 }
@@ -734,11 +754,11 @@ if ($("btnDropLayers")) $("btnDropLayers").onclick = dropUncheckedLayers;
 if ($("btnKeepAllLayers")) {
   $("btnKeepAllLayers").onclick = () => {
     document.querySelectorAll(".layerKeep").forEach((cb) => { cb.checked = true; });
-    if ($("layerStatus")) $("layerStatus").textContent = "All layers marked keep.";
+    if ($("layerStatus")) ($("layerStatus")||{}).textContent = "All layers marked keep.";
   };
 }
 
-$("file").addEventListener("change", () => setStatus("File selected — click Parse", "warn"));
+$("file")?.addEventListener("change", () => setStatus("File selected — click Parse", "warn"));
 $("btnParse").addEventListener("click", async () => {
   const f = $("file").files?.[0];
   if (!f) { setStatus("Pick a .gguf file first", "err"); return; }
@@ -753,6 +773,7 @@ $("btnParse").addEventListener("click", async () => {
     renderMeta();
     renderTensors();
     setStatus(`Loaded ${f.name} — ${model.tensors.length} tensors`, "ok");
+    toast("Loaded " + model.tensors.length + " tensors", "ok");
     if ($("opLog")) $("opLog").textContent = "";
     hideLoading();
   } catch (e) {
@@ -769,16 +790,16 @@ if ($("chkMaster")) $("chkMaster").addEventListener("change", (e) => {
   else selected.clear();
   renderTensors();
 });
-$("btnSelectAll").onclick = () => { if (model) { model.tensors.forEach((_, i) => selected.add(i)); renderTensors(); } };
-$("btnSelectNone").onclick = () => { selected.clear(); renderTensors(); };
-$("btnSelectLinear").onclick = () => selectBy((t) => /weight$/i.test(t.name) && !/norm/i.test(t.name));
+if ($("btnSelectAll")) $("btnSelectAll").onclick = () => { if (model) { model.tensors.forEach((_, i) => selected.add(i)); renderTensors(); } };
+if ($("btnSelectNone")) $("btnSelectNone").onclick = () => { selected.clear(); renderTensors(); };
+if ($("btnSelectLinear")) $("btnSelectLinear").onclick = () => selectBy((t) => /weight$/i.test(t.name) && !/norm/i.test(t.name));
 if ($("btnSelectAttn")) $("btnSelectAttn").onclick = () => selectBy((t) => /attn|attention/i.test(t.name));
 if ($("btnSelectFFN")) $("btnSelectFFN").onclick = () => selectBy((t) => /ffn|mlp|feed_forward/i.test(t.name));
 
 // ---- Prune ----
-$("btnPrune").onclick = () => {
+if ($("btnPrune")) $("btnPrune").onclick = () => {
   if (!model || selected.size === 0) { log("opLog", "Nothing selected", "err"); return; }
-  const thr = Number($("pruneThr")?.value) || (Number($("prunePct")?.value) || 10) / 100;
+  const thr = Number($("prunePct")?.value) || (Number($("prunePct")?.value) || 10) / 100;
   let touched = 0, zerosed = 0;
   for (const i of selected) {
     const t = model.tensors[i];
@@ -828,42 +849,49 @@ const TARGET_MAP = {
   Q2_0: GGML.Q2_0,
 };
 
-$("btnQuant").onclick = () => {
-  if (!model || selected.size === 0) { log("opLog", "Nothing selected", "err"); return; }
-  const targetName = $("quantType").value;
+$("btnQuant").onclick = async () => {
+  if (!model || selected.size === 0) { log("opLog", "Nothing selected", "err"); toast("Select tensors first", "err"); return; }
+  const targetName = $("targetDtype")?.value || "Q4_0";
   const target = TARGET_MAP[targetName];
-  if (target === undefined) { log("opLog", "Unknown target", "err"); return; }
-
+  if (target == null) { log("opLog", "Unknown type", "err"); return; }
+  showLoading("Quantizing " + selected.size + " tensors…");
   let ok = 0, fail = 0;
-  for (const i of selected) {
-    const t = model.tensors[i];
-    // Skip 1D norms optionally? User selected them — quantize unless tiny bias
-    try {
-      const f32 = pending.has(i)
-        ? (() => {
-            const ov = pending.get(i);
-            const nEl = t.nElements;
-            if (ov.dtype === GGML.F32) return dequantF32(ov.data);
-            if (ov.dtype === GGML.F16) return dequantF16(ov.data);
-            if (ov.dtype === GGML.Q8_0) return dequantQ8_0(ov.data, nEl);
-            if (ov.dtype === GGML.Q4_0) return dequantQ4_0(ov.data, nEl);
-            if (ov.dtype === GGML.Q2_0) return dequantQ2_0(ov.data, nEl);
-            throw new Error("cannot dequant pending " + ov.dtype);
-          })()
-        : tensorToFloat32(t, model.buffer);
-
-      const { data, dtype } = quantizeFloats(f32, target);
-      pending.set(i, { dtype, data });
-      ok++;
-      log("opLog", `${t.name}: ${GGML_NAME[t.dtype]} → ${GGML_NAME[dtype]} (${data.byteLength} bytes)`, "ok");
-    } catch (e) {
-      fail++;
-      log("opLog", `${t.name}: ${e.message}`, "err");
+  const list = [...selected];
+  try {
+    for (let n = 0; n < list.length; n++) {
+      const i = list[n];
+      const tens = model.tensors[i];
+      try {
+        let f32;
+        if (pending.has(i)) {
+          const ov = pending.get(i);
+          if (ov.dtype === GGML.F32) f32 = dequantF32(ov.data);
+          else if (ov.dtype === GGML.F16) f32 = dequantF16(ov.data);
+          else if (ov.dtype === GGML.Q8_0) f32 = dequantQ8_0(ov.data, tens.nElements);
+          else if (ov.dtype === GGML.Q4_0) f32 = dequantQ4_0(ov.data, tens.nElements);
+          else if (ov.dtype === GGML.Q2_0) f32 = dequantQ2_0(ov.data, tens.nElements);
+          else f32 = tensorToFloat32(tens, model.buffer);
+        } else {
+          f32 = tensorToFloat32(tens, model.buffer);
+        }
+        const q = quantizeFloats(f32, target);
+        pending.set(i, { dtype: target, data: q });
+        ok++;
+      } catch (e) {
+        fail++;
+        log("opLog", tens.name + ": " + e.message, "err");
+      }
+      if (n % 2 === 0) {
+        setProgress(10 + (80 * (n + 1)) / list.length);
+        await yieldToUI();
+      }
     }
+    renderTensors();
+    log("opLog", "Quant " + targetName + ": " + ok + " ok, " + fail + " fail", ok ? "ok" : "err");
+    toast("Quant done: " + ok + " tensors", ok ? "ok" : "err");
+  } finally {
+    hideLoading();
   }
-  renderMeta();
-  renderTensors();
-  log("opLog", `Quantize done: ${ok} ok, ${fail} failed`, ok ? "ok" : "err");
 };
 
 if ($("btnQuantAll")) $("btnQuantAll").onclick = () => {
@@ -873,7 +901,7 @@ if ($("btnQuantAll")) $("btnQuantAll").onclick = () => {
   $("btnQuant").click();
 };
 
-$("btnClearPending").onclick = () => {
+if ($("btnClearPending")) $("btnClearPending").onclick = () => {
   pending.clear();
   renderMeta();
   renderTensors();
@@ -881,41 +909,44 @@ $("btnClearPending").onclick = () => {
 };
 
 // ---- Export (full rebuild with quant) ----
-$("btnExport").onclick = () => {
-  if (!model) { log("opLog", "No model", "err"); return; }
+$("btnExport").onclick = async () => {
+  if (!model) { toast("Load a model first", "err"); return; }
+  showLoading("Building GGUF…");
   try {
-    // Optional: apply export-time quant to all selected if "apply on export" and pending empty
-    const exportQuant = $("exportQuant").value;
+    const exportQuant = $("exportQuant")?.value || "keep";
     if (exportQuant !== "keep" && selected.size > 0) {
       const target = TARGET_MAP[exportQuant];
+      let n = 0;
       for (const i of selected) {
-        if (pending.has(i)) continue;
-        const t = model.tensors[i];
+        const tens = model.tensors[i];
         try {
-          const f32 = tensorToFloat32(t, model.buffer);
-          const { data, dtype } = quantizeFloats(f32, target);
-          pending.set(i, { dtype, data });
+          const f32 = tensorToFloat32(tens, model.buffer);
+          pending.set(i, { dtype: target, data: quantizeFloats(f32, target) });
         } catch (e) {
-          log("opLog", `export quant skip ${t.name}: ${e.message}`, "warn");
+          log("exportLog", "skip " + tens.name + ": " + e.message, "warn");
         }
+        n++;
+        if (n % 3 === 0) { setProgress(20 + 40 * n / selected.size); await yieldToUI(); }
       }
     }
-
-    setStatus("Writing GGUF…", "warn");
+    setProgress(70);
+    await yieldToUI();
     const buf = writeGguf(model, pending);
+    setProgress(90);
     const blob = new Blob([buf], { type: "application/octet-stream" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    const tag = pending.size ? `.q${pending.size}` : ".edited";
-    a.download = (model.fileName || "model").replace(/\.gguf$/i, "") + tag + ".gguf";
+    a.download = (model.fileName || "model").replace(/\.gguf$/i, "") + "-studio.gguf";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`Exported ${blob.size} bytes`, "ok");
-    log("opLog", `Exported GGUF with ${pending.size} overridden tensors, size=${blob.size}`, "ok");
+    log("exportLog", "Exported " + (buf.byteLength / 1e6).toFixed(2) + " MB", "ok");
+    toast("Downloaded GGUF (" + (buf.byteLength / 1e6).toFixed(1) + " MB)", "ok");
   } catch (e) {
-    setStatus(String(e.message || e), "err");
-    log("opLog", String(e.message || e), "err");
     console.error(e);
+    log("exportLog", String(e.message || e), "err");
+    toast("Export failed: " + (e.message || e), "err");
+  } finally {
+    hideLoading();
   }
 };
 
@@ -941,7 +972,7 @@ if ($("btnExportUnsloth")) {
     try {
       const mod = await loadUnslothMod();
       const cfg = mod.collectJobConfigFromDom($);
-      const raw = $("trainData").value || "";
+      const raw = $("dataset").value || "";
       const py = mod.buildUnslothPython(cfg, raw);
       mod.downloadBlob("unsloth_job.json", JSON.stringify(cfg, null, 2), "application/json");
       mod.downloadBlob("unsloth_train.py", py, "text/x-python");
@@ -981,13 +1012,13 @@ if ($("btnTrainStop")) {
 if ($("btnTrain")) $("btnTrain").onclick = async () => {
   trainAbort = false;
   $("trainLog").textContent = "";
-  const steps = Number($("trainSteps").value) || 50;
-  const seqLen = Number($("trainSeq").value) || 128;
-  const lr = Number($("trainLr").value) || 3e-4;
-  const fakeQuant = $("fakeQuant").value;
-  const source = $("trainSource").value;
+  const steps = Number($("trainSteps")?.value) || 20;
+  const seqLen = Number($("trainSeq")?.value) || 64;
+  const lr = Number($("trainLr")?.value) || 3e-4;
+  const fakeQuant = $("trainFakeQuant")?.value || "none";
+  const source = model ? "gguf" : "scratch";
   const exportQ = $("trainExportQuant").value;
-  const raw = $("trainData").value.trim();
+  const raw = $("dataset").value.trim();
   if (!raw) {
     tlog("Paste dataset (messages JSONL / ShareGPT / text)", "err");
     return;
@@ -1556,3 +1587,34 @@ if ($("btnApplyParse")) {
     }
   };
 }
+
+// Mobile drawer
+(function setupMobileNav() {
+  const side = $("sidebar");
+  const bd = $("backdrop");
+  const open = () => { side?.classList.add("open"); bd?.classList.add("show"); };
+  const close = () => { side?.classList.remove("open"); bd?.classList.remove("show"); };
+  $("btnMenu")?.addEventListener("click", () => {
+    if (side?.classList.contains("open")) close(); else open();
+  });
+  bd?.addEventListener("click", close);
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const v = btn.dataset.view;
+      document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".view").forEach((el) => el.classList.remove("active"));
+      btn.classList.add("active");
+      $("view-" + v)?.classList.add("active");
+      close();
+    });
+  });
+})();
+
+window.onerror = function(msg, src, line, col, err) {
+  toast(String(msg), "err");
+  console.error(msg, src, line, err);
+  return false;
+};
+window.addEventListener("unhandledrejection", (e) => {
+  toast(String(e.reason?.message || e.reason), "err");
+});

@@ -2,260 +2,329 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>GGUF Studio</title>
   <style>
     :root {
       --bg: #0b0f14; --panel: #111827; --sidebar: #0d1219; --border: #1f2937;
-      --text: #e5e7eb; --muted: #9ca3af; --accent: #6366f1; --danger: #ef4444; --input: #1a2332;
+      --text: #e5e7eb; --muted: #9ca3af; --accent: #6366f1; --danger: #ef4444;
+      --input: #1a2332; --ok: #4ade80; --warn: #fbbf24;
+      --sidebar-w: 240px;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; height: 100vh; display: flex; overflow: hidden; }
-    .sidebar { width: 220px; min-width: 220px; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; }
-    .brand { font-weight: 700; font-size: 16px; padding: 8px 10px 16px; }
-    .brand span { color: var(--accent); }
-    .nav-btn { text-align: left; background: transparent; border: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 15px;
+      display: flex; overflow: hidden;
+    }
+    /* Mobile top bar */
+    .topbar {
+      display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: 52px; background: var(--sidebar); border-bottom: 1px solid var(--border);
+      align-items: center; padding: 0 12px; gap: 10px;
+    }
+    .topbar .brand { font-weight: 700; flex: 1; }
+    .topbar .brand span { color: var(--accent); }
+    .menu-btn {
+      width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 10px;
+      background: var(--input); color: var(--text); font-size: 20px; cursor: pointer;
+    }
+    .sidebar {
+      width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--sidebar);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      padding: 16px 12px; gap: 4px; overflow-y: auto; z-index: 120;
+    }
+    .sidebar .brand { font-weight: 700; font-size: 16px; padding: 8px 10px 16px; }
+    .sidebar .brand span { color: var(--accent); }
+    .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; padding: 14px 12px 6px; }
+    .nav-btn {
+      text-align: left; background: transparent; border: none; color: var(--muted);
+      padding: 12px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 500;
+      min-height: 44px;
+    }
     .nav-btn:hover { background: #1a2332; color: var(--text); }
     .nav-btn.active { background: #1e1b4b; color: #c7d2fe; }
-    .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; padding: 14px 12px 6px; }
-    .main { flex: 1; overflow: auto; padding: 20px 24px 40px; }
-    .view { display: none; max-width: 1100px; }
-    .view.active { display: block; }
-    h1 { font-size: 22px; margin: 0 0 6px; font-weight: 650; }
-    h2 { font-size: 15px; margin: 18px 0 10px; color: #d1d5db; font-weight: 600; }
-    .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
-    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
-    button, select, input[type=file], input[type=number], input[type=text], textarea {
-      background: var(--input); color: var(--text); border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    .backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 110;
     }
-    button { cursor: pointer; font-weight: 500; }
+    .backdrop.show { display: block; }
+    .main {
+      flex: 1; overflow: auto; padding: 16px; -webkit-overflow-scrolling: touch;
+    }
+    .view { display: none; max-width: 960px; margin: 0 auto; }
+    .view.active { display: block; }
+    h1 { font-size: 1.35rem; margin: 0 0 6px; }
+    h2 { font-size: 1rem; margin: 14px 0 8px; color: #d1d5db; }
+    .sub { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px; margin-bottom: 12px;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+    button, select, input, textarea {
+      background: var(--input); color: var(--text); border: 1px solid var(--border);
+      padding: 10px 12px; border-radius: 10px; font-size: 14px; max-width: 100%;
+    }
+    button { cursor: pointer; font-weight: 600; min-height: 44px; }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     button.good { background: #166534; border-color: #16a34a; color: #fff; }
     button.danger { background: #7f1d1d; border-color: var(--danger); color: #fecaca; }
-    label { color: var(--muted); font-size: 12px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    label { color: var(--muted); font-size: 13px; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
-    th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; }
-    th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
-    .scroll { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
-    pre, .log { background: #0a0e14; border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9ca3af; }
-    .ok { color: #4ade80; } .warn { color: #fbbf24; } .err { color: #f87171; } .muted { color: var(--muted); }
-    textarea { width: 100%; min-height: 120px; resize: vertical; }
-    .chat-box { display: flex; flex-direction: column; gap: 10px; min-height: 360px; background: #0a0e14; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
-    .chat-messages { flex: 1; overflow: auto; max-height: 420px; display: flex; flex-direction: column; gap: 8px; }
-    .bubble { max-width: 85%; padding: 10px 12px; border-radius: 12px; line-height: 1.45; white-space: pre-wrap; }
+    th, td { border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; word-break: break-all; }
+    th { color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+    .scroll { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; -webkit-overflow-scrolling: touch; }
+    .log {
+      background: #0a0e14; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px; white-space: pre-wrap; word-break: break-word; max-height: 200px;
+      overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9ca3af;
+    }
+    .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: #f87171; } .muted { color: var(--muted); }
+    textarea { width: 100%; min-height: 100px; resize: vertical; }
+    .hint {
+      background: #1e293b; border-left: 3px solid var(--accent); padding: 10px 12px;
+      border-radius: 0 8px 8px 0; margin: 10px 0; color: #cbd5e1; font-size: 13px; line-height: 1.45;
+    }
+    .chat-box { display: flex; flex-direction: column; gap: 10px; min-height: 300px; background: #0a0e14; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .chat-messages { flex: 1; overflow: auto; max-height: 360px; display: flex; flex-direction: column; gap: 8px; }
+    .bubble { max-width: 90%; padding: 10px 12px; border-radius: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
     .bubble.user { align-self: flex-end; background: #312e81; }
     .bubble.assistant { align-self: flex-start; background: #1f2937; }
-    .chat-input-row { display: flex; gap: 8px; }
-    .chat-input-row textarea { min-height: 44px; flex: 1; }
+    .chat-input-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chat-input-row textarea { min-height: 48px; flex: 1; min-width: 140px; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    @media (max-width: 800px) { body { flex-direction: column; } .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; min-width: 0; } .grid2 { grid-template-columns: 1fr; } }
-
     #globalLoading {
-      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
       z-index: 9999; align-items: center; justify-content: center; flex-direction: column; gap: 12px;
     }
     #globalLoading.show { display: flex; }
     .spinner {
-      width: 36px; height: 36px; border: 3px solid #374151; border-top-color: #6366f1;
+      width: 40px; height: 40px; border: 3px solid #374151; border-top-color: var(--accent);
       border-radius: 50%; animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-msg { color: #e5e7eb; font-size: 14px; }
-    .hint {
-      background: #1e293b; border-left: 3px solid #6366f1; padding: 10px 12px;
-      border-radius: 0 8px 8px 0; margin: 10px 0; color: #cbd5e1; font-size: 13px; line-height: 1.45;
+    #toast {
+      display: none; position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 10000;
+      background: #1f2937; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+      max-width: 520px; margin: 0 auto; box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      font-size: 14px; line-height: 1.4;
     }
-    .hint code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-    .badge {
-      display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
-      background: #312e81; color: #c7d2fe; margin-left: 8px; vertical-align: middle;
+    #toast.show { display: block; }
+    #toast.err { border-color: var(--danger); }
+    #toast.ok { border-color: #16a34a; }
+    #progressBar {
+      display: none; position: fixed; top: 0; left: 0; height: 3px; background: var(--accent);
+      z-index: 10001; width: 0%; transition: width 0.2s;
     }
-    .parse-preview { max-height: 180px; overflow: auto; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+    #progressBar.show { display: block; }
+    @media (max-width: 800px) {
+      .topbar { display: flex; }
+      .sidebar {
+        position: fixed; top: 0; bottom: 0; left: 0;
+        transform: translateX(-105%); transition: transform 0.2s ease;
+        box-shadow: 8px 0 24px rgba(0,0,0,0.4);
+      }
+      .sidebar.open { transform: translateX(0); }
+      .main { padding-top: 64px; width: 100%; }
+      .grid2 { grid-template-columns: 1fr; }
+      .sidebar .brand { display: none; }
+    }
   </style>
 </head>
 <body>
-  <aside class="sidebar">
+  <div id="progressBar"></div>
+  <div id="globalLoading"><div class="spinner"></div><div class="loading-msg">Working…</div></div>
+  <div id="toast"></div>
+  <div class="backdrop" id="backdrop"></div>
+
+  <header class="topbar">
+    <button type="button" class="menu-btn" id="btnMenu" aria-label="Menu">☰</button>
+    <div class="brand">GGUF <span>Studio</span></div>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
     <div class="brand">GGUF <span>Studio</span></div>
     <div class="nav-section">Model</div>
-    <button class="nav-btn active" data-view="load">Load / Inspect</button>
-    <button class="nav-btn" data-view="edit">Quant / Prune</button>
-    <button class="nav-btn" data-view="layers">Layers</button>
+    <button type="button" class="nav-btn active" data-view="load">Load / Inspect</button>
+    <button type="button" class="nav-btn" data-view="edit">Quant / Prune</button>
+    <button type="button" class="nav-btn" data-view="layers">Layers</button>
     <div class="nav-section">Train</div>
-    <button class="nav-btn" data-view="train">Fine-tune</button>
+    <button type="button" class="nav-btn" data-view="train">Fine-tune</button>
     <div class="nav-section">Use</div>
-    <button class="nav-btn" data-view="chat">Chat (wllama)</button>
-    <button class="nav-btn" data-view="export">Export</button>
+    <button type="button" class="nav-btn" data-view="chat">Chat</button>
+    <button type="button" class="nav-btn" data-view="export">Export</button>
   </aside>
+
   <main class="main">
     <div id="view-load" class="view active">
       <h1>Load model</h1>
-      <p class="sub">Open a GGUF from disk. All work stays in your browser.</p>
-      <div class="hint" id="hint-load">Tip: start with a small Q4/Q8 model (&lt;100MB) for quant experiments. After quant/prune, use <b>Export</b> — files are rewritten with 32-byte tensor alignment for llamafile.</div>
+      <p class="sub">Open a GGUF from your device. Nothing is uploaded to a server.</p>
+      <div class="hint">On phone, prefer models under ~80MB. After quant/prune always use <b>Export</b> (rewrites with 32-byte alignment for llamafile).</div>
       <div class="card">
         <div class="row">
-          <input type="file" id="file" accept=".gguf" />
-          <button id="btnParse" class="primary">Parse</button>
-          <span id="status" class="muted">No file</span>
+          <input type="file" id="file" accept=".gguf,application/octet-stream" />
+          <button type="button" id="btnParse" class="primary">Parse</button>
         </div>
-        <div id="meta" class="log muted">Metadata will appear here.</div>
+        <div id="status" class="muted">No file loaded</div>
+        <div id="meta" class="log muted" style="margin-top:10px">Metadata appears here after Parse.</div>
       </div>
     </div>
+
     <div id="view-edit" class="view">
       <h1>Quantize &amp; prune</h1>
-      <p class="sub">Select tensors, quantize or magnitude-prune. Export writes 32-byte aligned GGUF for llamafile.</p>
+      <p class="sub">Select tensors, then quantize or magnitude-prune. Changes sit in memory until Export.</p>
       <div class="card">
         <div class="row">
-          <button id="btnSelectAll">Select all</button>
-          <button id="btnSelectNone">Select none</button>
-          <button id="btnSelectLinear">Select *weight</button>
-          <select id="targetDtype">
+          <button type="button" id="btnSelectAll">All</button>
+          <button type="button" id="btnSelectNone">None</button>
+          <button type="button" id="btnSelectLinear">*weight</button>
+        </div>
+        <div class="row">
+          <select id="targetDtype" title="Target quant">
             <option value="Q4_0">Q4_0</option>
             <option value="Q8_0">Q8_0</option>
             <option value="Q2_0">Q2_0 (studio)</option>
             <option value="F16">F16</option>
             <option value="F32">F32</option>
           </select>
-          <button id="btnQuant" class="primary">Quant selected</button>
-          <button id="btnPrune">Magnitude prune %</button>
-          <input type="number" id="prunePct" value="10" min="1" max="90" style="width:70px" />
-          <button id="btnClearPending" class="danger">Clear pending</button>
+          <button type="button" id="btnQuant" class="primary">Quant selected</button>
+        </div>
+        <div class="row">
+          <button type="button" id="btnPrune">Magnitude prune %</button>
+          <input type="number" id="prunePct" value="10" min="1" max="90" style="width:72px" />
+          <button type="button" id="btnClearPending" class="danger">Clear pending</button>
         </div>
         <div id="opLog" class="log"></div>
       </div>
-      <div class="card"><div class="scroll"><table>
-        <thead><tr><th></th><th>name</th><th>dtype</th><th>dims</th><th>nbytes</th></tr></thead>
-        <tbody id="tensorBody"></tbody>
-      </table></div></div>
+      <div class="card">
+        <div class="scroll">
+          <table>
+            <thead><tr><th></th><th>name</th><th>dtype</th><th>dims</th><th>bytes</th></tr></thead>
+            <tbody id="tensorBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
+
     <div id="view-layers" class="view">
       <h1>Structural layers</h1>
-      <p class="sub">Drop entire blocks (blk.N.*) — real size/speed change.</p>
+      <p class="sub">Drop whole blocks (blk.N.*) — real size reduction for phone models.</p>
       <div class="card">
         <div class="row">
           <label>Keep first N layers</label>
-          <input type="number" id="keepLayers" value="6" min="1" style="width:70px" />
-          <button id="btnDropTail" class="primary">Drop tail layers</button>
-          <button id="btnDropSelected">Drop selected blk.*</button>
+          <input type="number" id="keepLayers" value="4" min="1" style="width:72px" />
+          <button type="button" id="btnDropTail" class="primary">Drop tail</button>
         </div>
         <div id="layerLog" class="log"></div>
       </div>
     </div>
+
     <div id="view-train" class="view">
       <h1>Fine-tune</h1>
-      <p class="sub">In-browser training for tiny models. LoRA, response-only mask, ChatML-style templates.</p>
+      <p class="sub">Tiny models only (phone will struggle above ~50M). Expect lag — watch the progress bar.</p>
       <div class="card">
-        <h2>Dataset <span class="badge">upload or paste</span></h2>
-        <div class="hint">
-          Upload <code>.jsonl</code>, <code>.json</code>, <code>.txt</code>, or <code>.csv</code>. The parser will detect format and show a preview.
-          Or paste lines like <code>{"messages":[...]}</code> below.
-        </div>
+        <h2>Dataset</h2>
+        <div class="hint">Upload JSONL/JSON/CSV/TXT or paste samples. Use Parse → Apply to normalize.</div>
         <div class="row">
-          <input type="file" id="datasetFile" accept=".jsonl,.json,.txt,.csv,.tsv" />
-          <button id="btnParseDataset" class="primary">Parse dataset</button>
-          <span id="datasetStatus" class="muted">No dataset</span>
+          <input type="file" id="datasetFile" accept=".jsonl,.json,.txt,.csv,.tsv,text/*" />
+          <button type="button" id="btnParseDataset" class="primary">Parse dataset</button>
         </div>
+        <div id="datasetStatus" class="muted">No dataset</div>
         <div id="datasetAssist" class="card" style="display:none;background:#0a0e14;margin-top:10px">
           <h2 style="margin-top:0">Parsing assistant</h2>
           <div class="row">
-            <label>Detected</label>
             <select id="dsDetectedFormat">
-              <option value="messages">messages (OpenAI/ChatML JSONL)</option>
-              <option value="sharegpt">sharegpt (from/value or conversations)</option>
-              <option value="alpaca">alpaca (instruction/input/output)</option>
-              <option value="csv">csv (prompt,response columns)</option>
-              <option value="text">plain text (one sample per line)</option>
+              <option value="messages">messages</option>
+              <option value="sharegpt">sharegpt</option>
+              <option value="alpaca">alpaca</option>
+              <option value="csv">csv</option>
+              <option value="text">text</option>
             </select>
-            <label>prompt col</label><input type="text" id="dsPromptCol" value="prompt" style="width:90px" />
-            <label>response col</label><input type="text" id="dsResponseCol" value="response" style="width:90px" />
-            <button id="btnApplyParse">Apply → training box</button>
+            <button type="button" id="btnApplyParse">Apply → train box</button>
           </div>
-          <div id="datasetPreview" class="log parse-preview muted">Preview…</div>
+          <div id="datasetPreview" class="log"></div>
         </div>
-        <textarea id="dataset" placeholder='{"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello!"}]}'></textarea>
+        <textarea id="dataset" placeholder='{"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello! I am Akari."}]}'></textarea>
         <div class="row">
           <label>format</label>
           <select id="dsFormat"><option value="messages">messages</option><option value="sharegpt">sharegpt</option><option value="text">text</option></select>
           <label>template</label>
           <select id="chatTpl"><option value="chatml">ChatML</option><option value="llama3">Llama3</option><option value="vicuna">Vicuna</option></select>
-          <label><input type="checkbox" id="trainOnResp" checked /> train on assistant only</label>
-        </div>
-      </div>
-      <div class="card grid2">
-        <div>
-          <h2>LoRA / optim</h2>
-          <div class="row">
-            <label><input type="checkbox" id="trainUseLora" checked /> LoRA</label>
-            <label>r</label><input type="number" id="trainLoraR" value="8" style="width:60px" />
-            <label>α</label><input type="number" id="trainLoraAlpha" value="16" style="width:60px" />
-          </div>
-          <div class="row">
-            <label>steps</label><input type="number" id="trainSteps" value="50" style="width:70px" />
-            <label>seq</label><input type="number" id="trainSeq" value="128" style="width:70px" />
-            <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:70px" />
-          </div>
-          <div class="row">
-            <label>fake-quant</label>
-            <select id="trainFakeQuant"><option value="none">none</option><option value="Q4_0">Q4_0</option><option value="Q8_0">Q8_0</option><option value="Q2_0">Q2_0</option></select>
-            <label>write-back quant</label>
-            <select id="trainExportQuant"><option value="Q4_0">Q4_0</option><option value="Q8_0">Q8_0</option><option value="F16">F16</option><option value="keep">keep</option></select>
-          </div>
-        </div>
-        <div>
-          <h2>Scratch (no GGUF)</h2>
-          <div class="row">
-            <label>emb</label><input type="number" id="scratchEmb" value="128" style="width:60px" />
-            <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:50px" />
-            <label>heads</label><input type="number" id="scratchHeads" value="4" style="width:50px" />
-            <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:60px" />
-          </div>
+          <label><input type="checkbox" id="trainOnResp" checked /> responses only</label>
         </div>
       </div>
       <div class="card">
+        <h2>Training</h2>
         <div class="row">
-          <button id="btnTrain" class="primary">Start training</button>
-          <button id="btnTrainStop" class="danger">Stop</button>
-          <span id="trainStatus" class="muted">Idle</span>
+          <label><input type="checkbox" id="trainUseLora" checked /> LoRA</label>
+          <label>r</label><input type="number" id="trainLoraR" value="8" style="width:56px" />
+          <label>α</label><input type="number" id="trainLoraAlpha" value="16" style="width:56px" />
         </div>
+        <div class="row">
+          <label>steps</label><input type="number" id="trainSteps" value="20" style="width:64px" />
+          <label>seq</label><input type="number" id="trainSeq" value="64" style="width:64px" />
+          <label>lr</label><input type="text" id="trainLr" value="3e-4" style="width:72px" />
+        </div>
+        <div class="row">
+          <label>fake-quant</label>
+          <select id="trainFakeQuant"><option value="none">none</option><option value="Q4_0">Q4_0</option><option value="Q8_0">Q8_0</option></select>
+          <label>write-back</label>
+          <select id="trainExportQuant"><option value="Q4_0">Q4_0</option><option value="F16">F16</option><option value="keep">keep</option></select>
+        </div>
+        <div class="row">
+          <label>scratch emb</label><input type="number" id="scratchEmb" value="64" style="width:56px" />
+          <label>layers</label><input type="number" id="scratchLayers" value="2" style="width:48px" />
+          <label>heads</label><input type="number" id="scratchHeads" value="4" style="width:48px" />
+          <label>vocab</label><input type="number" id="scratchVocab" value="256" style="width:64px" />
+        </div>
+        <div class="row">
+          <button type="button" id="btnTrain" class="primary">Start training</button>
+          <button type="button" id="btnTrainStop" class="danger">Stop</button>
+        </div>
+        <div id="trainStatus" class="muted">Idle</div>
         <div id="trainLog" class="log"></div>
       </div>
     </div>
+
     <div id="view-chat" class="view">
       <h1>Chat</h1>
-      <p class="sub">Inference via wllama (llama.cpp WASM). Load the current in-memory GGUF or pick a file.</p>
+      <p class="sub">wllama (llama.cpp WASM). Load current GGUF or pick a file.</p>
       <div class="card">
         <div class="row">
-          <button id="btnChatLoad" class="primary">Load current GGUF into wllama</button>
-          <input type="file" id="chatFile" accept=".gguf" />
-          <label>n_predict</label><input type="number" id="chatNPredict" value="64" style="width:70px" />
-          <label>temp</label><input type="text" id="chatTemp" value="0.7" style="width:60px" />
-          <span id="chatStatus" class="muted">Not loaded</span>
+          <button type="button" id="btnChatLoad" class="primary">Load current GGUF</button>
+          <input type="file" id="chatFile" accept=".gguf,application/octet-stream" />
         </div>
+        <div class="row">
+          <label>tokens</label><input type="number" id="chatNPredict" value="48" style="width:64px" />
+          <label>temp</label><input type="text" id="chatTemp" value="0.7" style="width:56px" />
+        </div>
+        <div id="chatStatus" class="muted">Not loaded</div>
       </div>
       <div class="card chat-box">
         <div id="chatMessages" class="chat-messages"></div>
         <div class="chat-input-row">
           <textarea id="chatInput" placeholder="Message…" rows="2"></textarea>
-          <button id="btnChatSend" class="primary">Send</button>
+          <button type="button" id="btnChatSend" class="primary">Send</button>
         </div>
       </div>
     </div>
+
     <div id="view-export" class="view">
-      <h1>Export GGUF</h1>
-      <p class="sub">Full rewrite with per-tensor 32-byte alignment (fixes llamafile offset errors).</p>
-      <div class="hint">Always re-download after quant — do not reuse a previous broken export. Prefer Q4_0 for phone/llamafile over studio Q2_0.</div>
+      <h1>Export</h1>
+      <p class="sub">Download a GGUF with correct 32-byte tensor alignment for llamafile / llama.cpp.</p>
+      <div class="hint">Always Export after quant or prune. Do not reuse a previous broken download.</div>
       <div class="card">
         <div class="row">
-          <label>Also quant selected as</label>
+          <label>Also quant selected</label>
           <select id="exportQuant">
-            <option value="keep">keep pending / original</option>
+            <option value="keep">keep pending</option>
             <option value="Q4_0">Q4_0</option>
             <option value="Q8_0">Q8_0</option>
-            <option value="Q2_0">Q2_0 (studio)</option>
             <option value="F16">F16</option>
-            <option value="F32">F32</option>
           </select>
-          <button id="btnExport" class="good">Download GGUF</button>
+          <button type="button" id="btnExport" class="good">Download GGUF</button>
         </div>
         <div id="exportLog" class="log"></div>
       </div>
