@@ -1,37 +1,43 @@
-/** Shared quant / dequant (llama-compatible Q4_0 Q8_0 + simple Q2_0) */
+/**
+ * Quant/dequant — algorithms ported from ggml-quants.c (llama.cpp / ggml-org)
+ * quantize_row_q4_0_ref, quantize_row_q8_0_ref, dequantize_row_q4_0, dequantize_row_q8_0
+ * https://github.com/ggml-org/llama.cpp/blob/master/ggml/src/ggml-quants.c
+ */
 
 export const GGML = {
   F32: 0, F16: 1, Q4_0: 2, Q4_1: 3, Q5_0: 6, Q5_1: 7, Q8_0: 8, Q8_1: 9,
-  Q2_0: 100, // studio-local simple 2-bit (not ggml Q2_K)
   Q2_K: 10, Q3_K: 11, Q4_K: 12, Q5_K: 13, Q6_K: 14, Q8_K: 15,
-  BF16: 30,
 };
+
 export const GGML_NAME = Object.fromEntries(Object.entries(GGML).map(([k, v]) => [v, k]));
 
 export const QK4_0 = 32;
 export const QK8_0 = 32;
-export const QK2_0 = 32;
-export const BLOCK_Q4_0 = 18;
-export const BLOCK_Q8_0 = 34;
-export const BLOCK_Q2_0 = 10; // f16 scale + 8 bytes (32 x 2-bit)
+export const BLOCK_Q4_0 = 18; // fp16 d + 16 bytes qs
+export const BLOCK_Q8_0 = 34; // fp16 d + 32 bytes qs
 
 export function typeInfo(t) {
   switch (t) {
     case GGML.F32: return { el: 4, block: 1 };
-    case GGML.F16: case GGML.BF16: return { el: 2, block: 1 };
+    case GGML.F16: return { el: 2, block: 1 };
     case GGML.Q8_0: return { el: BLOCK_Q8_0 / QK8_0, block: QK8_0, bytesPerBlock: BLOCK_Q8_0 };
     case GGML.Q4_0: return { el: BLOCK_Q4_0 / QK4_0, block: QK4_0, bytesPerBlock: BLOCK_Q4_0 };
-    case GGML.Q2_0: return { el: BLOCK_Q2_0 / QK2_0, block: QK2_0, bytesPerBlock: BLOCK_Q2_0 };
-    default: return { el: 0, block: 1 };
+    default: return null;
   }
 }
 
 export function nbytesFor(dtype, nElements) {
   const info = typeInfo(dtype);
+  if (!info) throw new Error("Unsupported dtype for nbytes: " + dtype);
   if (info.bytesPerBlock) {
-    return Math.ceil(nElements / info.block) * info.bytesPerBlock;
+    if (nElements % info.block !== 0) {
+      // pad element count up for size calc (ggml requires multiple of block)
+      const blocks = Math.ceil(nElements / info.block);
+      return blocks * info.bytesPerBlock;
+    }
+    return (nElements / info.block) * info.bytesPerBlock;
   }
-  return Math.ceil(nElements * info.el);
+  return nElements * info.el;
 }
 
 export function f32ToF16(val) {
@@ -39,12 +45,12 @@ export function f32ToF16(val) {
   const x = new Uint32Array(f32.buffer)[0];
   const sign = (x >>> 16) & 0x8000;
   let exp = ((x >>> 23) & 0xff) - 127 + 15;
-  let mant = (x >>> 13) & 0x3ff;
+  const mant = (x >>> 13) & 0x3ff;
   if (((x >>> 23) & 0xff) === 0xff) return sign | 0x7c00 | (mant ? 0x200 : 0);
   if (exp <= 0) {
     if (exp < -10) return sign;
-    mant = (0x400 | mant) >> (1 - exp);
-    return sign | mant;
+    const m = (0x400 | mant) >> (1 - exp);
+    return sign | m;
   }
   if (exp >= 31) return sign | 0x7c00;
   return sign | (exp << 10) | mant;
@@ -54,102 +60,89 @@ export function f16ToF32(h) {
   const s = (h & 0x8000) >> 15;
   const e = (h & 0x7c00) >> 10;
   const f = h & 0x03ff;
-  if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+  if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / Math.pow(2, 10));
   if (e === 31) return f ? NaN : (s ? -Infinity : Infinity);
-  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / Math.pow(2, 10));
 }
 
 function writeF16LE(view, offset, f32) {
   view.setUint16(offset, f32ToF16(f32), true);
 }
 
+function readF16LE(view, offset) {
+  return f16ToF32(view.getUint16(offset, true));
+}
+
+/** ggml quantize_row_q4_0_ref — requires n % 32 == 0 (we zero-pad) */
+export function quantizeQ4_0(src) {
+  const nIn = src.length;
+  const nBlocks = Math.ceil(nIn / QK4_0);
+  const n = nBlocks * QK4_0;
+  const out = new Uint8Array(nBlocks * BLOCK_Q4_0);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+
+  for (let i = 0; i < nBlocks; i++) {
+    let amax = 0.0;
+    let max = 0.0;
+    for (let j = 0; j < QK4_0; j++) {
+      const idx = i * QK4_0 + j;
+      const v = idx < nIn ? src[idx] : 0;
+      const av = Math.abs(v);
+      if (amax < av) {
+        amax = av;
+        max = v;
+      }
+    }
+    // official: d = max / -8
+    const d = max / -8;
+    const id = d ? 1.0 / d : 0.0;
+    writeF16LE(view, i * BLOCK_Q4_0, d);
+
+    for (let j = 0; j < QK4_0 / 2; j++) {
+      const idx0 = i * QK4_0 + j;
+      const idx1 = i * QK4_0 + QK4_0 / 2 + j;
+      const x0 = (idx0 < nIn ? src[idx0] : 0) * id;
+      const x1 = (idx1 < nIn ? src[idx1] : 0) * id;
+      // (int8_t)(x + 8.5f) then MIN(15, ...)
+      let xi0 = (x0 + 8.5) | 0; // trunc toward 0 like int8 cast for positive-ish
+      let xi1 = (x1 + 8.5) | 0;
+      // C (int8_t) truncates toward zero; for negative values match:
+      xi0 = Math.min(15, Math.max(-128, Math.trunc(x0 + 8.5)));
+      xi1 = Math.min(15, Math.max(-128, Math.trunc(x1 + 8.5)));
+      if (xi0 < 0) xi0 = 0;
+      if (xi1 < 0) xi1 = 0;
+      if (xi0 > 15) xi0 = 15;
+      if (xi1 > 15) xi1 = 15;
+      out[i * BLOCK_Q4_0 + 2 + j] = (xi0 & 0x0f) | ((xi1 & 0x0f) << 4);
+    }
+  }
+  return out;
+}
+
+/** ggml quantize_row_q8_0_ref */
 export function quantizeQ8_0(src) {
-  const n = src.length;
-  const nBlocks = Math.ceil(n / QK8_0);
+  const nIn = src.length;
+  const nBlocks = Math.ceil(nIn / QK8_0);
   const out = new Uint8Array(nBlocks * BLOCK_Q8_0);
-  const view = new DataView(out.buffer);
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const base = ib * QK8_0;
-    let amax = 0;
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+
+  for (let i = 0; i < nBlocks; i++) {
+    let amax = 0.0;
     for (let j = 0; j < QK8_0; j++) {
-      const v = base + j < n ? Math.abs(src[base + j]) : 0;
+      const idx = i * QK8_0 + j;
+      const v = idx < nIn ? Math.abs(src[idx]) : 0;
       if (v > amax) amax = v;
     }
     const d = amax / 127;
-    const id = d > 0 ? 1 / d : 0;
-    writeF16LE(view, ib * BLOCK_Q8_0, d);
+    const id = d ? 1.0 / d : 0.0;
+    writeF16LE(view, i * BLOCK_Q8_0, d);
     for (let j = 0; j < QK8_0; j++) {
-      const v = base + j < n ? src[base + j] : 0;
-      let q = Math.round(v * id);
+      const idx = i * QK8_0 + j;
+      const x0 = (idx < nIn ? src[idx] : 0) * id;
+      let q = Math.round(x0);
       if (q < -128) q = -128;
       if (q > 127) q = 127;
-      out[ib * BLOCK_Q8_0 + 2 + j] = q & 0xff;
-    }
-  }
-  return out;
-}
-
-export function quantizeQ4_0(src) {
-  const n = src.length;
-  const nBlocks = Math.ceil(n / QK4_0);
-  const out = new Uint8Array(nBlocks * BLOCK_Q4_0);
-  const view = new DataView(out.buffer);
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const base = ib * QK4_0;
-    let amax = 0;
-    for (let j = 0; j < QK4_0; j++) {
-      const v = base + j < n ? Math.abs(src[base + j]) : 0;
-      if (v > amax) amax = v;
-    }
-    const d = amax / 7;
-    const id = d > 0 ? 1 / d : 0;
-    writeF16LE(view, ib * BLOCK_Q4_0, d);
-    for (let j = 0; j < QK4_0 / 2; j++) {
-      const x0 = base + j < n ? src[base + j] : 0;
-      const x1 = base + j + QK4_0 / 2 < n ? src[base + j + QK4_0 / 2] : 0;
-      let qi0 = Math.round(x0 * id) + 8;
-      let qi1 = Math.round(x1 * id) + 8;
-      if (qi0 < 0) qi0 = 0; if (qi0 > 15) qi0 = 15;
-      if (qi1 < 0) qi1 = 0; if (qi1 > 15) qi1 = 15;
-      out[ib * BLOCK_Q4_0 + 2 + j] = qi0 | (qi1 << 4);
-    }
-  }
-  return out;
-}
-
-/**
- * Simple Q2_0-style: 32 weights, 2 bits each (levels -1.5,-0.5,0.5,1.5)*scale
- * Not identical to ggml Q2_K — for studio export / fake-quant experiments.
- * Loaders that don't know type 100 will need F16/Q4 export instead for llama.cpp.
- */
-export function quantizeQ2_0(src) {
-  const n = src.length;
-  const nBlocks = Math.ceil(n / QK2_0);
-  const out = new Uint8Array(nBlocks * BLOCK_Q2_0);
-  const view = new DataView(out.buffer);
-  const levels = [-1.5, -0.5, 0.5, 1.5];
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const base = ib * QK2_0;
-    let amax = 0;
-    for (let j = 0; j < QK2_0; j++) {
-      const v = base + j < n ? Math.abs(src[base + j]) : 0;
-      if (v > amax) amax = v;
-    }
-    const d = amax / 1.5;
-    const id = d > 0 ? 1 / d : 0;
-    writeF16LE(view, ib * BLOCK_Q2_0, d);
-    for (let j = 0; j < QK2_0; j += 4) {
-      let packed = 0;
-      for (let k = 0; k < 4; k++) {
-        const v = base + j + k < n ? src[base + j + k] * id : 0;
-        let best = 0, bestDist = Infinity;
-        for (let li = 0; li < 4; li++) {
-          const dist = Math.abs(v - levels[li]);
-          if (dist < bestDist) { bestDist = dist; best = li; }
-        }
-        packed |= (best & 3) << (k * 2);
-      }
-      out[ib * BLOCK_Q2_0 + 2 + (j / 4)] = packed;
+      out[i * BLOCK_Q8_0 + 2 + j] = q & 0xff;
     }
   }
   return out;
@@ -172,59 +165,44 @@ export function dequantF32(bytes) {
 
 export function dequantF16(bytes) {
   const n = bytes.byteLength / 2;
-  const out = new Float32Array(n);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  for (let i = 0; i < n; i++) out[i] = f16ToF32(view.getUint16(i * 2, true));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = readF16LE(view, i * 2);
+  return out;
+}
+
+/** ggml dequantize_row_q4_0 */
+export function dequantQ4_0(bytes, nElements) {
+  const nBlocks = Math.ceil(nElements / QK4_0);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Float32Array(nElements);
+  for (let i = 0; i < nBlocks; i++) {
+    const d = readF16LE(view, i * BLOCK_Q4_0);
+    for (let j = 0; j < QK4_0 / 2; j++) {
+      const qs = bytes[i * BLOCK_Q4_0 + 2 + j];
+      const x0 = (qs & 0x0f) - 8;
+      const x1 = (qs >> 4) - 8;
+      const o0 = i * QK4_0 + j;
+      const o1 = i * QK4_0 + QK4_0 / 2 + j;
+      if (o0 < nElements) out[o0] = x0 * d;
+      if (o1 < nElements) out[o1] = x1 * d;
+    }
+  }
   return out;
 }
 
 export function dequantQ8_0(bytes, nElements) {
   const nBlocks = Math.ceil(nElements / QK8_0);
-  const out = new Float32Array(nElements);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const d = f16ToF32(view.getUint16(ib * BLOCK_Q8_0, true));
+  const out = new Float32Array(nElements);
+  for (let i = 0; i < nBlocks; i++) {
+    const d = readF16LE(view, i * BLOCK_Q8_0);
     for (let j = 0; j < QK8_0; j++) {
-      const idx = ib * QK8_0 + j;
-      if (idx >= nElements) break;
-      out[idx] = view.getInt8(ib * BLOCK_Q8_0 + 2 + j) * d;
-    }
-  }
-  return out;
-}
-
-export function dequantQ4_0(bytes, nElements) {
-  const nBlocks = Math.ceil(nElements / QK4_0);
-  const out = new Float32Array(nElements);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const d = f16ToF32(view.getUint16(ib * BLOCK_Q4_0, true));
-    for (let j = 0; j < QK4_0 / 2; j++) {
-      const byte = bytes[ib * BLOCK_Q4_0 + 2 + j];
-      const qi0 = (byte & 0x0f) - 8;
-      const qi1 = (byte >> 4) - 8;
-      const i0 = ib * QK4_0 + j;
-      const i1 = ib * QK4_0 + j + QK4_0 / 2;
-      if (i0 < nElements) out[i0] = qi0 * d;
-      if (i1 < nElements) out[i1] = qi1 * d;
-    }
-  }
-  return out;
-}
-
-export function dequantQ2_0(bytes, nElements) {
-  const nBlocks = Math.ceil(nElements / QK2_0);
-  const out = new Float32Array(nElements);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const levels = [-1.5, -0.5, 0.5, 1.5];
-  for (let ib = 0; ib < nBlocks; ib++) {
-    const d = f16ToF32(view.getUint16(ib * BLOCK_Q2_0, true));
-    for (let j = 0; j < QK2_0; j++) {
-      const idx = ib * QK2_0 + j;
-      if (idx >= nElements) break;
-      const byte = bytes[ib * BLOCK_Q2_0 + 2 + Math.floor(j / 4)];
-      const qi = (byte >> ((j % 4) * 2)) & 3;
-      out[idx] = levels[qi] * d;
+      const o = i * QK8_0 + j;
+      if (o >= nElements) break;
+      let q = bytes[i * BLOCK_Q8_0 + 2 + j];
+      if (q >= 128) q -= 256; // signed
+      out[o] = q * d;
     }
   }
   return out;
@@ -232,11 +210,10 @@ export function dequantQ2_0(bytes, nElements) {
 
 export function quantizeFloats(src, targetDtype) {
   switch (targetDtype) {
-    case GGML.F32: return { data: quantizeF32(src), dtype: GGML.F32 };
-    case GGML.F16: return { data: quantizeF16(src), dtype: GGML.F16 };
-    case GGML.Q8_0: return { data: quantizeQ8_0(src), dtype: GGML.Q8_0 };
-    case GGML.Q4_0: return { data: quantizeQ4_0(src), dtype: GGML.Q4_0 };
-    case GGML.Q2_0: return { data: quantizeQ2_0(src), dtype: GGML.Q2_0 };
-    default: throw new Error("Unsupported target quant " + targetDtype);
+    case GGML.F32: return quantizeF32(src);
+    case GGML.F16: return quantizeF16(src);
+    case GGML.Q8_0: return quantizeQ8_0(src);
+    case GGML.Q4_0: return quantizeQ4_0(src);
+    default: throw new Error("Unsupported target quant " + targetDtype + " — use Q4_0, Q8_0, F16, or F32");
   }
 }

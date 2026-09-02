@@ -211,11 +211,10 @@
         <p class="muted" style="margin:0 0 8px">Compress selected tensors. <b>Q4_0</b> is the sweet spot for phone/llamafile. Q8_0 is higher quality / larger.</p>
         <div class="row">
           <select id="targetDtype" title="Target quant">
-            <option value="Q4_0">Q4_0 — 4-bit (phone friendly)</option>
+            <option value="Q4_0">Q4_0 — 4-bit (llama.cpp compatible)</option>
             <option value="Q8_0">Q8_0 — 8-bit</option>
             <option value="F16">F16 — half precision</option>
             <option value="F32">F32 — full (large)</option>
-            <option value="Q2_0">Q2_0 — experimental studio only</option>
           </select>
           <button type="button" id="btnQuant" class="primary">Run quantize</button>
         </div>

@@ -1,3 +1,10 @@
+import {
+  quantizeQ4_0, quantizeQ8_0, quantizeF16, quantizeF32,
+  dequantQ4_0, dequantQ8_0, dequantF16, dequantF32,
+  quantizeFloats as quantizeFloatsMod, nbytesFor as nbytesForMod, GGML as GGML_MOD
+} from './quant.js';
+import { parseGguf as parseGgufMod, writeGguf as writeGgufMod } from './gguf-io.js';
+
 /**
  * GGUF Studio — functionality core
  * Full built-in quantization on export:
@@ -254,7 +261,7 @@ function tensorToFloat32(t, buffer) {
   }
 }
 
-function quantizeFloats(src, targetDtype) {
+function quantizeFloats_legacy(src, targetDtype) {
   switch (targetDtype) {
     case GGML.F32: return { data: quantizeF32(src), dtype: GGML.F32 };
     case GGML.F16: return { data: quantizeF16(src), dtype: GGML.F16 };
@@ -326,7 +333,7 @@ class GgufReader {
   }
 }
 
-function parseGguf(arrayBuffer) {
+function parseGguf_legacy(arrayBuffer) {
   const r = new GgufReader(arrayBuffer);
   const magic = r.u32();
   if (magic !== 0x46554747) throw new Error("Not a GGUF file (bad magic)");
@@ -478,7 +485,7 @@ class ByteWriter {
  * Build a complete GGUF from tensor list with optional per-tensor overrides.
  * overrides: Map index -> { dtype, data: Uint8Array }
  */
-function writeGguf(model, overrides = new Map()) {
+function writeGguf_legacy(model, overrides = new Map()) {
   const w = new ByteWriter();
   const alignment = model.alignment || 32;
 
@@ -1683,3 +1690,9 @@ window.onerror = function(msg, src, line, col, err) {
 window.addEventListener("unhandledrejection", (e) => {
   toast(String(e.reason?.message || e.reason), "err");
 });
+
+function parseGguf(ab) { return parseGgufMod(ab); }
+function writeGguf(model, ov) { return writeGgufMod(model, ov || new Map()); }
+function quantizeFloats(src, targetDtype) {
+  return quantizeFloatsMod(src, targetDtype);
+}
