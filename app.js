@@ -1,9 +1,5 @@
-import {
-  quantizeQ4_0, quantizeQ8_0, quantizeF16, quantizeF32,
-  dequantQ4_0, dequantQ8_0, dequantF16, dequantF32,
-  quantizeFloats as quantizeFloatsMod, nbytesFor as nbytesForMod, GGML as GGML_MOD
-} from './quant.js';
-import { parseGguf as parseGgufMod, writeGguf as writeGgufMod } from './gguf-io.js';
+import * as Quant from './quant.js';
+import * as GgufIO from './gguf-io.js';
 
 /**
  * GGUF Studio — functionality core
@@ -247,7 +243,7 @@ function dequantQ4_0(bytes, nElements) {
   return out;
 }
 
-function tensorToFloat32(t, buffer) {
+let tensorToFloat32 = function tensorToFloat32(t, buffer) {
   const nEl = t.dims.reduce((a, b) => a * b, 1) || 1;
   const bytes = new Uint8Array(buffer, t.absoluteOffset, t.nbytes);
   switch (t.dtype) {
@@ -261,7 +257,7 @@ function tensorToFloat32(t, buffer) {
   }
 }
 
-function quantizeFloats_legacy(src, targetDtype) {
+let quantizeFloats = function quantizeFloats(src, targetDtype) {
   switch (targetDtype) {
     case GGML.F32: return { data: quantizeF32(src), dtype: GGML.F32 };
     case GGML.F16: return { data: quantizeF16(src), dtype: GGML.F16 };
@@ -333,7 +329,7 @@ class GgufReader {
   }
 }
 
-function parseGguf_legacy(arrayBuffer) {
+let parseGguf = function parseGguf(arrayBuffer) {
   const r = new GgufReader(arrayBuffer);
   const magic = r.u32();
   if (magic !== 0x46554747) throw new Error("Not a GGUF file (bad magic)");
@@ -485,7 +481,7 @@ class ByteWriter {
  * Build a complete GGUF from tensor list with optional per-tensor overrides.
  * overrides: Map index -> { dtype, data: Uint8Array }
  */
-function writeGguf_legacy(model, overrides = new Map()) {
+let writeGguf = function writeGguf(model, overrides = new Map()) {
   const w = new ByteWriter();
   const alignment = model.alignment || 32;
 
@@ -1691,8 +1687,19 @@ window.addEventListener("unhandledrejection", (e) => {
   toast(String(e.reason?.message || e.reason), "err");
 });
 
-function parseGguf(ab) { return parseGgufMod(ab); }
-function writeGguf(model, ov) { return writeGgufMod(model, ov || new Map()); }
-function quantizeFloats(src, targetDtype) {
-  return quantizeFloatsMod(src, targetDtype);
-}
+
+// Override with ggml-faithful quant + verified GGUF I/O
+parseGguf = (ab) => GgufIO.parseGguf(ab);
+writeGguf = (model, ov) => GgufIO.writeGguf(model, ov || new Map());
+quantizeFloats = (src, dt) => Quant.quantizeFloats(src, dt);
+tensorToFloat32 = (t, buffer) => {
+  const bytes = new Uint8Array(buffer, t.absoluteOffset, t.nbytes);
+  const n = t.nElements;
+  switch (t.dtype) {
+    case Quant.GGML.F32: return Quant.dequantF32(bytes);
+    case Quant.GGML.F16: return Quant.dequantF16(bytes);
+    case Quant.GGML.Q8_0: return Quant.dequantQ8_0(bytes, n);
+    case Quant.GGML.Q4_0: return Quant.dequantQ4_0(bytes, n);
+    default: throw new Error("Cannot dequant dtype " + t.dtype + " for " + t.name);
+  }
+};
