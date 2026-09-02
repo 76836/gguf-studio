@@ -131,6 +131,24 @@
       .grid2 { grid-template-columns: 1fr; }
       .sidebar .brand { display: none; }
     }
+
+    .workspace-bar {
+      position: sticky; top: 0; z-index: 50;
+      background: #0f172a; border: 1px solid #334155; border-radius: 12px;
+      padding: 10px 14px; margin-bottom: 14px;
+      display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+      justify-content: space-between;
+    }
+    .workspace-bar.empty { opacity: 0.85; }
+    .ws-title { font-weight: 700; font-size: 14px; word-break: break-all; }
+    .ws-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #94a3b8; margin-top: 4px; }
+    .ws-meta span { background: #1e293b; padding: 2px 8px; border-radius: 999px; }
+    .ws-pending { color: #fbbf24 !important; border: 1px solid #a16207; }
+    .ws-last { font-size: 12px; color: #64748b; max-width: 100%; }
+    .ws-empty { color: #94a3b8; font-size: 13px; }
+    @media (max-width: 800px) {
+      .workspace-bar { top: 52px; }
+    }
   </style>
 </head>
 <body>
@@ -148,8 +166,8 @@
     <div class="brand">GGUF <span>Studio</span></div>
     <div class="nav-section">Model</div>
     <button type="button" class="nav-btn active" data-view="load">Load / Inspect</button>
-    <button type="button" class="nav-btn" data-view="edit">Quant / Prune</button>
-    <button type="button" class="nav-btn" data-view="layers">Layers</button>
+    <button type="button" class="nav-btn" data-view="edit">Make smaller</button>
+    <button type="button" class="nav-btn" data-view="layers">Drop layers</button>
     <div class="nav-section">Train</div>
     <button type="button" class="nav-btn" data-view="train">Fine-tune</button>
     <div class="nav-section">Use</div>
@@ -158,6 +176,8 @@
   </aside>
 
   <main class="main">
+    <div id="workspaceBar" class="workspace-bar empty"><span class="ws-empty">No model loaded — go to <b>Load</b></span></div>
+
     <div id="view-load" class="view active">
       <h1>Load model</h1>
       <p class="sub">Open a GGUF from your device. Nothing is uploaded to a server.</p>

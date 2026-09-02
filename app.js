@@ -551,6 +551,46 @@ function writeGguf(model, overrides = new Map()) {
 // ---- UI state ----
 
 let model = null;
+/** Workspace: tracks what the user is actually editing */
+let workspace = {
+  name: null,
+  ops: [], // {t, action, detail}
+  baseName: null,
+};
+function wsLog(action, detail) {
+  workspace.ops.push({ t: Date.now(), action, detail });
+  if (workspace.ops.length > 40) workspace.ops.shift();
+  renderWorkspace();
+}
+function renderWorkspace() {
+  const el = $("workspaceBar");
+  if (!el) return;
+  if (!model) {
+    el.innerHTML = '<span class="ws-empty">No model loaded — go to <b>Load</b></span>';
+    el.className = "workspace-bar empty";
+    return;
+  }
+  const layers = (typeof listBlockLayers === "function") ? listBlockLayers() : [];
+  const pendingN = pending?.size || 0;
+  const nT = model.tensors?.length || 0;
+  const last = workspace.ops[workspace.ops.length - 1];
+  el.className = "workspace-bar";
+  el.innerHTML = `
+    <div class="ws-main">
+      <div class="ws-title">${escapeHtml(model.fileName || workspace.name || "untitled.gguf")}</div>
+      <div class="ws-meta">
+        <span>${nT} tensors</span>
+        <span>${layers.length ? layers.length + " layers (blk)" : "no blk layers"}</span>
+        <span class="${pendingN ? "ws-pending" : ""}">${pendingN} pending edit${pendingN === 1 ? "" : "s"}</span>
+      </div>
+    </div>
+    <div class="ws-last">${last ? escapeHtml(last.action + ": " + last.detail) : "No edits yet"}</div>
+  `;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 let selected = new Set();
 /** @type {Map<number, {dtype:number, data:Uint8Array}>} */
 let pending = new Map(); // tensor index → quantized payload
@@ -772,8 +812,13 @@ $("btnParse").addEventListener("click", async () => {
     pending = new Map();
     renderMeta();
     renderTensors();
+    renderWorkspace();
     setStatus(`Loaded ${f.name} — ${model.tensors.length} tensors`, "ok");
     toast("Loaded " + model.tensors.length + " tensors", "ok");
+    workspace.name = model.fileName;
+    workspace.baseName = model.fileName;
+    workspace.ops = [];
+    wsLog("loaded", model.tensors.length + " tensors");
     if ($("opLog")) $("opLog").textContent = "";
     hideLoading();
   } catch (e) {
@@ -889,6 +934,7 @@ $("btnQuant").onclick = async () => {
     renderTensors();
     log("opLog", "Quant " + targetName + ": " + ok + " ok, " + fail + " fail", ok ? "ok" : "err");
     toast("Quant done: " + ok + " tensors", ok ? "ok" : "err");
+    if (ok) wsLog("quantize", targetName + " on " + ok + " tensors");
   } finally {
     hideLoading();
   }
@@ -941,6 +987,7 @@ $("btnExport").onclick = async () => {
     URL.revokeObjectURL(a.href);
     log("exportLog", "Exported " + (buf.byteLength / 1e6).toFixed(2) + " MB", "ok");
     toast("Downloaded GGUF (" + (buf.byteLength / 1e6).toFixed(1) + " MB)", "ok");
+    wsLog("export", (buf.byteLength / 1e6).toFixed(1) + " MB");
   } catch (e) {
     console.error(e);
     log("exportLog", String(e.message || e), "err");
@@ -1017,25 +1064,28 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
   const lr = Number($("trainLr")?.value) || 3e-4;
   const fakeQuant = $("trainFakeQuant")?.value || "none";
   const source = model ? "gguf" : "scratch";
-  const exportQ = $("trainExportQuant").value;
-  const raw = $("dataset").value.trim();
+  const exportQ = $("trainExportQuant")?.value || "Q4_0";
+  const raw = ($("dataset")?.value || "").trim();
   if (!raw) {
     tlog("Paste dataset (messages JSONL / ShareGPT / text)", "err");
+    hideLoading();
     return;
   }
 
   const usMod = await loadUnslothMod();
-  const dataFmt = $("usDataFmt")?.value || "messages";
-  const chatTpl = $("usChatTpl")?.value || "chatml";
-  const trainOnResp = $("usTrainOnResp")?.checked !== false;
+  const dataFmt = $("dsFormat")?.value || "messages";
+  const chatTpl = $("chatTpl")?.value || "chatml";
+  const trainOnResp = $("trainOnResp")?.checked !== false;
   const examples = usMod.parseDataset(raw, dataFmt);
   if (examples.length === 0) {
     tlog("No examples parsed", "err");
+    hideLoading();
     return;
   }
   tlog(`Parsed ${examples.length} examples | format=${dataFmt} | train_on_responses_only=${trainOnResp}`, "ok");
 
   $("trainStatus").textContent = "Loading trainer…";
+  showLoading("Starting fine-tune…");
   let TinyLM, loadTinyLMFromGguf, tinyLMToPending;
   try {
     let mod;
@@ -1045,6 +1095,7 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
       tlog("Failed to load train.js: " + (ie.message || ie), "err"); toast("Train module failed: " + (ie.message || ie), "err");
       console.error(ie);
       $("trainStatus").textContent = "Module load error";
+      hideLoading();
       return;
     }
     TinyLM = mod.TinyLM;
@@ -1083,6 +1134,8 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
     }
   } catch (e) {
     tlog("Init failed: " + e.message, "err");
+    hideLoading();
+    toast("Train init failed: " + e.message, "err");
     return;
   }
 
@@ -1108,11 +1161,15 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
       const { loss, grads } = lm.lossAndGrad(ids, { fullLayers: true, mask: trainOnResp ? mask : null });
       lm.adamStep(grads, lr);
       losses.push(loss);
-      if (step % 5 === 0 || step === steps - 1) {
+      if (step % 1 === 0) {
+        setProgress(10 + 85 * (step + 1) / steps);
         const avg = losses.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, losses.length);
-        $("trainStatus").textContent = `step ${step + 1}/${steps} loss=${loss.toFixed(4)} avg20=${avg.toFixed(4)}`;
-        if (step % 10 === 0) tlog(`step ${step} loss=${loss.toFixed(4)}`, "ok");
-        await new Promise((r) => setTimeout(r, 0));
+        if ($("trainStatus")) $("trainStatus").textContent = `step ${step + 1}/${steps} loss=${loss.toFixed(4)} avg20=${avg.toFixed(4)}`;
+        if (step % 5 === 0) {
+          tlog(`step ${step} loss=${loss.toFixed(4)}`, "ok");
+          showLoading(`Training step ${step + 1}/${steps}…`);
+        }
+        await yieldToUI();
       }
     }
   } catch (e) {
@@ -1121,6 +1178,8 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
       tlog("Train error: " + e.message, "err");
       console.error(e);
       $("trainStatus").textContent = "Error";
+      hideLoading();
+      toast("Train error", "err");
       return;
     }
   }
@@ -1136,6 +1195,9 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
     tlog("Scratch train done (in-memory only).", "warn");
   }
   $("trainStatus").textContent = "Done";
+  hideLoading();
+  wsLog("train", "finished");
+  toast("Training finished", "ok");
 };
 
 setStatus("Ready — load a GGUF", "muted");
@@ -1321,6 +1383,8 @@ function keepFirstNLayers(n) {
   renderMeta();
   renderTensors();
   log("layerLog", `Kept first ${n} layers → ${newTensors.length} tensors. Export to write GGUF.`, "ok");
+  wsLog("drop layers", "kept first " + n + " → " + newTensors.length + " tensors");
+  if (model) model.fileName = (workspace.baseName || "model").replace(/\.gguf$/i, "") + `-${n}L.gguf`;
 }
 if ($("btnDropTail")) {
   $("btnDropTail").onclick = () => keepFirstNLayers(Number($("keepLayers")?.value) || 1);
@@ -1377,6 +1441,7 @@ window.__ggufStudio = {
     pending = new Map();
     renderMeta();
     renderTensors();
+    renderWorkspace();
     setStatus(`Loaded ${name} — ${model.tensors.length} tensors`, "ok");
     return { tensors: model.tensors.length, meta: model.metadata };
   },
