@@ -1042,7 +1042,7 @@ if ($("btnTrain")) $("btnTrain").onclick = async () => {
     try {
       mod = await import("./train.js");
     } catch (ie) {
-      tlog("Failed to load train.js / quant.js: " + (ie.message || ie), "err");
+      tlog("Failed to load train.js: " + (ie.message || ie), "err"); toast("Train module failed: " + (ie.message || ie), "err");
       console.error(ie);
       $("trainStatus").textContent = "Module load error";
       return;
@@ -1167,8 +1167,8 @@ function chatLog(role, text) {
 }
 
 async function getWllama() {
-  const { Wllama } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm/index.js");
-  const { default: WasmFromCDN } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm/wasm-from-cdn.js");
+  const { Wllama } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.2.1/esm/index.js");
+  const { default: WasmFromCDN } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@2.2.1/esm/wasm-from-cdn.js");
   return new Wllama(WasmFromCDN);
 }
 

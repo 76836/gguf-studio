@@ -173,35 +173,55 @@
     </div>
 
     <div id="view-edit" class="view">
-      <h1>Quantize &amp; prune</h1>
-      <p class="sub">Select tensors, then quantize or magnitude-prune. Changes sit in memory until Export.</p>
+      <h1>Make model smaller</h1>
+      <p class="sub">Two tools: <b>Quantize</b> (fewer bits per weight) and <b>Prune</b> (zero out tiny weights). Both need Export afterward.</p>
+
       <div class="card">
+        <h2>Step 1 — Pick weights</h2>
+        <p class="muted" style="margin:0 0 8px">Usually you want the big matrix weights, not the tiny norm vectors.</p>
         <div class="row">
-          <button type="button" id="btnSelectAll">All</button>
-          <button type="button" id="btnSelectNone">None</button>
-          <button type="button" id="btnSelectLinear">*weight</button>
+          <button type="button" id="btnSelectLinear" class="primary">Select big weights</button>
+          <button type="button" id="btnSelectAll">Select everything</button>
+          <button type="button" id="btnSelectNone">Clear selection</button>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Step 2 — Quantize (recommended)</h2>
+        <p class="muted" style="margin:0 0 8px">Compress selected tensors. <b>Q4_0</b> is the sweet spot for phone/llamafile. Q8_0 is higher quality / larger.</p>
         <div class="row">
           <select id="targetDtype" title="Target quant">
-            <option value="Q4_0">Q4_0</option>
-            <option value="Q8_0">Q8_0</option>
-            <option value="Q2_0">Q2_0 (studio)</option>
-            <option value="F16">F16</option>
-            <option value="F32">F32</option>
+            <option value="Q4_0">Q4_0 — 4-bit (phone friendly)</option>
+            <option value="Q8_0">Q8_0 — 8-bit</option>
+            <option value="F16">F16 — half precision</option>
+            <option value="F32">F32 — full (large)</option>
+            <option value="Q2_0">Q2_0 — experimental studio only</option>
           </select>
-          <button type="button" id="btnQuant" class="primary">Quant selected</button>
+          <button type="button" id="btnQuant" class="primary">Run quantize</button>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Step 3 — Optional prune</h2>
+        <p class="muted" style="margin:0 0 8px">Sets the smallest weights to zero. Does <b>not</b> shrink file size much until you quantize; mostly for experiments.</p>
         <div class="row">
-          <button type="button" id="btnPrune">Magnitude prune %</button>
+          <label>% of smallest weights to zero</label>
           <input type="number" id="prunePct" value="10" min="1" max="90" style="width:72px" />
-          <button type="button" id="btnClearPending" class="danger">Clear pending</button>
+          <button type="button" id="btnPrune">Run prune</button>
+          <button type="button" id="btnClearPending" class="danger">Undo all pending changes</button>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Log</h2>
         <div id="opLog" class="log"></div>
       </div>
+
       <div class="card">
+        <h2>Tensor list</h2>
         <div class="scroll">
           <table>
-            <thead><tr><th></th><th>name</th><th>dtype</th><th>dims</th><th>bytes</th></tr></thead>
+            <thead><tr><th></th><th>name</th><th>type</th><th>shape</th><th>bytes</th></tr></thead>
             <tbody id="tensorBody"></tbody>
           </table>
         </div>
@@ -209,14 +229,19 @@
     </div>
 
     <div id="view-layers" class="view">
-      <h1>Structural layers</h1>
-      <p class="sub">Drop whole blocks (blk.N.*) — real size reduction for phone models.</p>
+      <h1>Drop whole layers</h1>
+      <p class="sub">Transformer models are stacked blocks (<code>blk.0</code>, <code>blk.1</code>, …). Removing blocks makes the model <b>much</b> smaller and faster — but dumber unless you train again.</p>
+
       <div class="card">
+        <h2>Keep the first N blocks</h2>
+        <p class="muted" style="margin:0 0 8px">Example: a 30-layer model → keep 4 → only <code>blk.0</code>…<code>blk.3</code> remain (renumbered). Then Export.</p>
         <div class="row">
-          <label>Keep first N layers</label>
+          <label>Keep first</label>
           <input type="number" id="keepLayers" value="4" min="1" style="width:72px" />
-          <button type="button" id="btnDropTail" class="primary">Drop tail</button>
+          <label>layers</label>
+          <button type="button" id="btnDropTail" class="primary">Drop the rest</button>
         </div>
+        <div class="hint">Tip: for a phone “doorman” style model, try 2–6 layers, then Fine-tune so it still says useful lines.</div>
         <div id="layerLog" class="log"></div>
       </div>
     </div>
